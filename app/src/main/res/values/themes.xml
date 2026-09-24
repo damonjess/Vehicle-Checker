@@ -1,9 +1,18 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.VehicleChecker" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <item name="colorPrimary">@color/brand_teal</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorSecondary">@color/brand_nav</item>
+        <item name="android:statusBarColor">@color/brand_nav</item>
+        <item name="android:windowBackground">@color/screen_bg</item>
     </style>
 
     <style name="Theme.VehicleChecker" parent="Base.Theme.VehicleChecker" />
+
+    <style name="DetailDivider">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">1dp</item>
+        <item name="android:background">#FFE7E9EA</item>
+    </style>
 </resources>

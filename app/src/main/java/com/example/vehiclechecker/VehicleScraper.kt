@@ -5,8 +5,17 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Connection
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 
 object VehicleScraper {
+
+    private const val BASE_URL = "https://vehicleenquiry.service.gov.uk"
+    private const val USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    private const val TIMEOUT_MS = 15000
+
+    private const val VRN_FIELD = "wizard_vehicle_enquiry_capture_vrn[vrn]"
+    private const val CONFIRM_FIELD = "wizard_vehicle_enquiry_capture_confirm_vehicle[confirmed]"
 
     suspend fun scrapeVehicleData(registration: String, context: Context? = null): VehicleData {
         return withContext(Dispatchers.IO) {
@@ -14,144 +23,84 @@ object VehicleScraper {
                 val cleanReg = registration.replace(" ", "").uppercase().trim()
                 if (cleanReg.isEmpty()) {
                     return@withContext VehicleData(
-                        errorMessage = context?.getString(R.string.enter_number_plate) ?: "Please enter a number plate."
+                        errorMessage = context?.getString(R.string.enter_number_plate)
+                            ?: "Please enter a number plate."
                     )
                 }
 
-                // Step 1: GET initial GOV.UK Vehicle Enquiry Service page
-                val initialUrl = "https://vehicleenquiry.service.gov.uk/"
-                val initialResponse = Jsoup.connect(initialUrl)
-                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .timeout(10000)
+                // Step 1: GET the search page to pick up session cookies + CSRF token
+                val initial = Jsoup.connect("$BASE_URL/?locale=en")
+                    .userAgent(USER_AGENT)
+                    .timeout(TIMEOUT_MS)
                     .execute()
 
-                var cookies = initialResponse.cookies()
-                var doc = initialResponse.parse()
+                val cookies = initial.cookies()
+                val searchDoc = initial.parse()
+                val searchForm = searchDoc.select("form")
+                    .firstOrNull { it.select("input[name=\"$VRN_FIELD\"]").isNotEmpty() }
 
-                // Find search form containing VRN input
-                val searchForm = doc.select("form").find { it.select("input[name*=vrn]").isNotEmpty() }
-                    ?: doc.select("form").last()
-                val searchAction = searchForm?.absUrl("action") ?: "https://vehicleenquiry.service.gov.uk/vehicle-enquiry/save?locale=en"
+                val authenticityToken = searchForm
+                    ?.selectFirst("input[name=authenticity_token]")
+                    ?.attr("value")
+                    ?: return@withContext VehicleData(
+                        errorMessage = context?.getString(R.string.error_message, "Could not reach the DVLA service")
+                            ?: "Error: Could not reach the DVLA service"
+                    )
 
-                val searchInputs = searchForm?.select("input") ?: emptyList()
-                val searchData = mutableMapOf<String, String>()
-                for (input in searchInputs) {
-                    val name = input.attr("name")
-                    val value = input.attr("value")
-                    if (name.isNotEmpty()) {
-                        searchData[name] = value
-                    }
-                }
-                val vrnKey = searchData.keys.firstOrNull { it.contains("vrn") }
-                    ?: "wizard_vehicle_enquiry_capture_vrn[vrn]"
-                searchData[vrnKey] = cleanReg
-
-                // Step 2: POST registration to retrieve vehicle confirmation page
-                val confirmResponse = Jsoup.connect(searchAction)
-                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                // Step 2: POST the registration -> confirmation page
+                val confirmDoc = Jsoup.connect("$BASE_URL/vehicle-enquiry/save?locale=en")
+                    .userAgent(USER_AGENT)
                     .cookies(cookies)
-                    .data(searchData)
+                    .data("authenticity_token", authenticityToken, VRN_FIELD, cleanReg)
                     .method(Connection.Method.POST)
-                    .timeout(10000)
+                    .timeout(TIMEOUT_MS)
                     .execute()
+                    .parse()
 
-                cookies = (cookies + confirmResponse.cookies()).toMutableMap()
-                doc = confirmResponse.parse()
-
-                var make = ""
-                var colour = ""
-                var fuelType = ""
-                var year = ""
-                var taxStatus = ""
-                var motStatus = ""
-
-                // Extract summary data from step 2 (confirmation page)
-                val confirmKeys = doc.select(".govuk-summary-list__key, dt, .summary-item")
-                val confirmValues = doc.select(".govuk-summary-list__value, dd, .summary-value")
-                for (i in 0 until minOf(confirmKeys.size, confirmValues.size)) {
-                    val key = confirmKeys[i].text().lowercase()
-                    val value = confirmValues[i].text()
-                    if (key.contains("make")) make = value
-                    if (key.contains("colour") || key.contains("color")) colour = value
-                }
-
-                // Step 3: POST confirmation choice ("Yes") to retrieve full Tax & MOT status
-                val confirmForm = doc.select("form").find { it.select("input[type=radio]").isNotEmpty() }
-                if (confirmForm != null) {
-                    val confirmAction = confirmForm.absUrl("action").ifEmpty { searchAction }
-                    val confirmInputs = confirmForm.select("input")
-                    val confirmData = mutableMapOf<String, String>()
-                    for (input in confirmInputs) {
-                        val name = input.attr("name")
-                        val value = input.attr("value")
-                        if (name.isNotEmpty() && (input.attr("type") != "radio")) {
-                            confirmData[name] = value
-                        }
-                    }
-                    val radioName = confirmForm.select("input[type=radio]").attr("name")
-                        .ifEmpty { "wizard_vehicle_enquiry_capture_confirm_vehicle[confirmed]" }
-                    confirmData[radioName] = "Yes"
-
-                    val finalResponse = Jsoup.connect(confirmAction)
-                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                        .cookies(cookies)
-                        .data(confirmData)
-                        .method(Connection.Method.POST)
-                        .timeout(10000)
-                        .execute()
-
-                    doc = finalResponse.parse()
-                }
-
-                // Extract full vehicle details from final page
-                val finalKeys = doc.select(".govuk-summary-list__key, dt, .summary-item")
-                val finalValues = doc.select(".govuk-summary-list__value, dd, .summary-value")
-                for (i in 0 until minOf(finalKeys.size, finalValues.size)) {
-                    val key = finalKeys[i].text().lowercase()
-                    val value = finalValues[i].text()
-                    if (key.contains("make") && make.isBlank()) make = value
-                    if ((key.contains("colour") || key.contains("color")) && colour.isBlank()) colour = value
-                    if (key.contains("fuel") && fuelType.isBlank()) fuelType = value
-                    if ((key.contains("year") || key.contains("first registration")) && year.isBlank()) year = value
-                    if (key.contains("vehicle status") && taxStatus.isBlank()) taxStatus = value
-                }
-
-                // Extract Tax and MOT status banners if present
-                val pageText = doc.body().text()
-                if (taxStatus.isBlank()) {
-                    if (pageText.contains("Taxed", ignoreCase = true)) {
-                        taxStatus = "Taxed"
-                    } else if (pageText.contains("Untaxed", ignoreCase = true)) {
-                        taxStatus = "Untaxed"
-                    } else if (pageText.contains("SORN", ignoreCase = true)) {
-                        taxStatus = "SORN"
-                    }
-                }
-
-                if (motStatus.isBlank()) {
-                    if (pageText.contains("valid MOT certificate", ignoreCase = true) || pageText.contains("MOT Valid", ignoreCase = true)) {
-                        motStatus = "MOT Valid"
-                    } else if (pageText.contains("No MOT", ignoreCase = true) || pageText.contains("MOT Expired", ignoreCase = true)) {
-                        motStatus = "MOT Expired / No MOT"
-                    }
-                }
-
-                if (make.isBlank() && taxStatus.isBlank()) {
+                if (confirmDoc.location().contains("VehicleNotFound") ||
+                    confirmDoc.body().text().contains("not found", ignoreCase = true)
+                ) {
                     return@withContext VehicleData(
                         errorMessage = context?.getString(R.string.no_data_found, cleanReg)
                             ?: "No data found for registration: $cleanReg"
                     )
                 }
 
-                return@withContext VehicleData(
-                    make = make,
-                    colour = colour,
-                    fuelType = fuelType,
-                    year = year,
-                    taxStatus = taxStatus,
-                    motStatus = motStatus
-                )
+                // Confirmation page: registration, make and colour
+                var registrationLabel = ""
+                var make = ""
+                var colour = ""
+                for (row in confirmDoc.select(".govuk-summary-list__row")) {
+                    val key = row.selectFirst("dt")?.text()?.lowercase() ?: continue
+                    val value = row.selectFirst("dd")?.text() ?: ""
+                    when {
+                        key.contains("registration") -> registrationLabel = value
+                        key.contains("make") -> make = value
+                        key.contains("colour") || key.contains("color") -> colour = value
+                    }
+                }
 
+                // Step 3: POST "Yes" to the confirmation -> full details page
+                val confirmForm = confirmDoc.select("form")
+                    .firstOrNull { it.select("input[type=radio][name=\"$CONFIRM_FIELD\"]").isNotEmpty() }
+                    ?: return@withContext VehicleData(
+                        errorMessage = context?.getString(R.string.no_data_found, cleanReg)
+                            ?: "No data found for registration: $cleanReg"
+                    )
+
+                val confirmToken = confirmForm.selectFirst("input[name=authenticity_token]")?.attr("value") ?: ""
+                val confirmAction = confirmForm.absUrl("action").ifEmpty { "$BASE_URL/ConfirmVehicle?locale=en" }
+
+                val resultDoc = Jsoup.connect(confirmAction)
+                    .userAgent(USER_AGENT)
+                    .cookies(cookies)
+                    .data("authenticity_token", confirmToken, CONFIRM_FIELD, "Yes")
+                    .method(Connection.Method.POST)
+                    .timeout(TIMEOUT_MS)
+                    .execute()
+                    .parse()
+
+                return@withContext parseResultsPage(resultDoc, registrationLabel, make, colour, context)
             } catch (e: Exception) {
                 e.printStackTrace()
                 return@withContext VehicleData(
@@ -161,4 +110,107 @@ object VehicleScraper {
             }
         }
     }
+
+    private fun parseResultsPage(
+        doc: Document,
+        registrationLabel: String,
+        make: String,
+        colour: String,
+        context: Context?
+    ): VehicleData {
+        var registration = registrationLabel
+        var makeValue = make
+        var colourValue = colour
+        var fuelType = ""
+        var yearOfManufacture = ""
+        var firstRegistered = ""
+        var engineSize = ""
+        var co2Emissions = ""
+        var vehicleStatus = ""
+        var wheelplan = ""
+        var lastV5cIssued = ""
+        var taxDueDate = ""
+        var motStatus = ""
+        var motExpiryDate = ""
+
+        // Vehicle details list (each row has a stable element id, fall back to dt text)
+        for (row in doc.select(".govuk-summary-list__row")) {
+            val key = row.selectFirst("dt")?.text()?.lowercase() ?: continue
+            val value = row.selectFirst("dd")?.text() ?: ""
+            when (row.id()) {
+                "make" -> if (makeValue.isBlank()) makeValue = value
+                "vehicle_colour" -> if (colourValue.isBlank()) colourValue = value
+                "fuel_type" -> fuelType = value
+                "year_of_manufacture" -> yearOfManufacture = value
+                "date_of_first_registration" -> firstRegistered = value
+                "engine_capacity" -> engineSize = value
+                "co2_emissions" -> co2Emissions = value
+                "vehicle_status" -> vehicleStatus = value
+                "wheelplan" -> wheelplan = value
+                "date_of_last_v5c_issued" -> lastV5cIssued = value
+                else -> {
+                    when {
+                        key.contains("make") -> if (makeValue.isBlank()) makeValue = value
+                        key.contains("colour") -> if (colourValue.isBlank()) colourValue = value
+                        key.contains("fuel") -> fuelType = value
+                        key.contains("year of manufacture") -> yearOfManufacture = value
+                        key.contains("first registration") -> firstRegistered = value
+                        key.contains("cylinder capacity") -> engineSize = value
+                        key.contains("co2") -> co2Emissions = value
+                        key.contains("vehicle status") -> vehicleStatus = value
+                        key.contains("wheelplan") -> wheelplan = value
+                        key.contains("v5c") -> lastV5cIssued = value
+                    }
+                }
+            }
+        }
+
+        // Tax banner: green panel = taxed, red panel = untaxed/SORN
+        doc.selectFirst("#tax-status-panel")?.let { panel ->
+            val isUntaxed = panel.hasClass("govuk-panel--confirmation").not()
+            val text = panel.text()
+            when {
+                isUntaxed && text.contains("SORN", ignoreCase = true) -> vehicleStatus = "SORN"
+                isUntaxed -> vehicleStatus = "Untaxed"
+                vehicleStatus.isBlank() -> vehicleStatus = "Taxed"
+            }
+            taxDueDate = TAX_DUE_REGEX.find(text)?.value ?: ""
+        }
+
+        // MOT banner: green panel = valid, red panel = expired/no MOT
+        doc.selectFirst("#mot-status-panel")?.let { panel ->
+            val isValid = panel.hasClass("govuk-panel--confirmation")
+            val text = panel.text()
+            motStatus = if (isValid) "Valid" else "Expired"
+            motExpiryDate = EXPIRES_REGEX.find(text)?.value ?: ""
+        }
+
+        if (makeValue.isBlank() && vehicleStatus.isBlank()) {
+            return VehicleData(
+                errorMessage = context?.getString(R.string.no_data_found, registration)
+                    ?: "No data found for registration: $registration"
+            )
+        }
+
+        return VehicleData(
+            registration = registration,
+            make = makeValue,
+            colour = colourValue,
+            fuelType = fuelType,
+            yearOfManufacture = yearOfManufacture,
+            firstRegistered = firstRegistered,
+            engineSize = engineSize,
+            co2Emissions = co2Emissions,
+            vehicleStatus = vehicleStatus,
+            wheelplan = wheelplan,
+            lastV5cIssued = lastV5cIssued,
+            taxStatus = vehicleStatus,
+            taxDueDate = taxDueDate,
+            motStatus = motStatus,
+            motExpiryDate = motExpiryDate
+        )
+    }
+
+    private val TAX_DUE_REGEX = Regex("Tax due:\\s*\\d{1,2} \\w+ \\d{4}", RegexOption.IGNORE_CASE)
+    private val EXPIRES_REGEX = Regex("Expires:\\s*\\d{1,2} \\w+ \\d{4}", RegexOption.IGNORE_CASE)
 }

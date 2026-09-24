@@ -1,10 +1,20 @@
 <resources>
-    <string name="app_name">Vehicle Checker</string>
+    <string name="app_name">Vehicle Check</string>
     <string name="scraping">Checking vehicle details…</string>
     <string name="enter_number_plate">Please enter a number plate.</string>
-    <string name="enter_number_plate_hint">Enter UK Registration (e.g. LC63XRO)</string>
+    <string name="enter_number_plate_hint">Enter reg, e.g. LC63 XRO</string>
     <string name="check_vehicle_button">Check Vehicle</string>
     <string name="results_placeholder">Results will appear here…</string>
     <string name="no_data_found">No data found for registration: %1$s</string>
     <string name="error_message">Error: %1$s</string>
+
+    <string name="app_tagline">Free UK car check</string>
+    <string name="dvla_vehicles">DVLA vehicle details</string>
+    <string name="dvla_vehicles_sub">Tax, make, colour &amp; more</string>
+    <string name="dvsa_mot_history">DVSA MOT history</string>
+    <string name="dvsa_mot_history_sub">Full test records &amp; defects</string>
+    <string name="recent_searches">Recent searches</string>
+    <string name="clear">Clear</string>
+    <string name="mot_history_title">MOT History</string>
+    <string name="no_mot_history">No MOT records found for this vehicle.</string>
 </resources>
