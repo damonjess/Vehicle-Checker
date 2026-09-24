@@ -4,10 +4,10 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import kotlinx.coroutines.suspendCancellableCoroutine
-import org.json.JSONArray
 import kotlin.coroutines.resume
 
 /**
@@ -33,7 +33,13 @@ object MotWebFetcher {
             "if(/no MOT/i.test(t)||/not found/i.test(t))return 'EMPTY';" +
             "return 'WAITING';}catch(e){return 'WAITING';}})()"
 
-    private const val HTML_JS = "(function(){return document.documentElement.outerHTML;})()"
+    class HtmlBridge(private val onHtmlReady: (String) -> Unit) {
+        @JavascriptInterface
+        @Suppress("unused")
+        fun processHTML(html: String) {
+            onHtmlReady(html)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun fetchResultsHtml(applicationContext: Context, registration: String): String? =
@@ -45,7 +51,7 @@ object MotWebFetcher {
                 var finished = false
                 var navigatedToResults = false
 
-                fun finish(html: String?) {
+                fun finishInternal(html: String?) {
                     if (finished) return
                     finished = true
                     try {
@@ -57,6 +63,14 @@ object MotWebFetcher {
                     if (cont.isActive) cont.resume(html)
                 }
 
+                fun finish(html: String?) {
+                    if (Looper.myLooper() == Looper.getMainLooper()) {
+                        finishInternal(html)
+                    } else {
+                        mainHandler.post { finishInternal(html) }
+                    }
+                }
+
                 fun poll(view: WebView) {
                     if (finished || !cont.isActive) return
                     polls++
@@ -65,20 +79,12 @@ object MotWebFetcher {
                         return
                     }
                     view.evaluateJavascript(STATUS_JS) { raw ->
-                        val status = try {
-                            JSONArray("[$raw]").getString(0)
-                        } catch (_: Exception) {
-                            "WAITING"
-                        }
+                        val status = raw?.replace("\"", "")?.trim() ?: "WAITING"
                         when (status) {
-                            "READY", "EMPTY" -> view.evaluateJavascript(HTML_JS) { rawHtml ->
-                                val html = try {
-                                    JSONArray("[$rawHtml]").getString(0)
-                                } catch (_: Exception) {
-                                    null
-                                }
-                                finish(html)
-                            }
+                            "READY", "EMPTY" -> view.evaluateJavascript(
+                                "window.AndroidBridge.processHTML(document.documentElement.outerHTML);",
+                                null
+                            )
                             else -> mainHandler.postDelayed({ poll(view) }, POLL_INTERVAL_MS)
                         }
                     }
@@ -88,6 +94,7 @@ object MotWebFetcher {
                     webView = WebView(applicationContext).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        addJavascriptInterface(HtmlBridge { html -> finish(html) }, "AndroidBridge")
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
                                 if (finished || !cont.isActive) return

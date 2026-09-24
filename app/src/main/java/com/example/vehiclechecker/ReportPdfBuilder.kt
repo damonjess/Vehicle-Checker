@@ -11,7 +11,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** Renders a simple one-page PDF report for a checked vehicle. */
+/** Renders a multi-page PDF report for a checked vehicle. */
 object ReportPdfBuilder {
 
     private const val PAGE_WIDTH = 595  // A4 @ 72dpi
@@ -19,8 +19,9 @@ object ReportPdfBuilder {
 
     fun build(context: Context, vehicle: VehicleData, mot: MotHistoryData?): File {
         val doc = PdfDocument()
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, 1).create())
-        val canvas = page.canvas
+        var pageNum = 1
+        var page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNum).create())
+        var canvas: Canvas = page.canvas
 
         val titlePaint = Paint().apply {
             color = Color.rgb(14, 74, 103)
@@ -50,6 +51,16 @@ object ReportPdfBuilder {
         val margin = 40f
         val colValue = 200f
 
+        fun checkNewPage(neededHeight: Float = 20f) {
+            if (y + neededHeight > PAGE_HEIGHT - 50f) {
+                doc.finishPage(page)
+                pageNum++
+                page = doc.startPage(PdfDocument.PageInfo.Builder(PAGE_WIDTH, PAGE_HEIGHT, pageNum).create())
+                canvas = page.canvas
+                y = 50f
+            }
+        }
+
         canvas.drawText("Vehicle Report", margin, y, titlePaint)
         y += 10f
         canvas.drawText(
@@ -59,12 +70,14 @@ object ReportPdfBuilder {
         y += 24f
 
         fun row(label: String, value: String) {
+            checkNewPage(20f)
             canvas.drawText(label, margin, y, labelPaint)
             canvas.drawText(value.ifBlank { "—" }, margin + colValue, y, valuePaint)
             y += 17f
         }
 
         fun heading(text: String) {
+            checkNewPage(30f)
             y += 10f
             canvas.drawText(text, margin, y, headingPaint)
             y += 17f
@@ -91,18 +104,20 @@ object ReportPdfBuilder {
         if (mot != null) {
             heading("MOT History (${mot.tests.size} tests)")
             if (mot.tests.isEmpty()) {
+                checkNewPage(20f)
                 canvas.drawText("No MOT tests recorded.", margin, y, bodyPaint)
                 y += 16f
             }
-            mot.tests.take(10).forEach { test ->
+            mot.tests.forEach { test ->
+                checkNewPage(20f)
                 val line = "${test.dateTested} — ${test.result} — ${test.mileage.ifBlank { "mileage not recorded" }}"
                 canvas.drawText(line, margin, y, bodyPaint)
                 y += 14f
                 test.advisories.forEach { advisory ->
+                    checkNewPage(18f)
                     canvas.drawText("   • $advisory", margin, y, labelPaint)
                     y += 13f
                 }
-                if (y > PAGE_HEIGHT - 60f) return@forEach
             }
         }
 

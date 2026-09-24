@@ -530,14 +530,11 @@ class MainActivity : AppCompatActivity() {
             val tvDiff = row.findViewById<TextView>(R.id.tvMileageDiff)
             tvDiff.text = test.mileageDifferenceText ?: "--"
             tvDiff.setTextColor(
-                ContextCompat.getColor(
-                    this,
-                    when {
-                        test.mileageDifference == null -> R.color.text_secondary
-                        test.mileageDifference!! < 0 -> R.color.status_danger
-                        else -> R.color.status_success
-                    }
-                )
+                when {
+                    test.mileageDifference == null -> 0xFFB0BEC5.toInt()
+                    test.mileageDifference!! < 0 -> 0xFFFF5252.toInt()
+                    else -> 0xFF69F0AE.toInt()
+                }
             )
             rowsContainer.addView(row)
         }

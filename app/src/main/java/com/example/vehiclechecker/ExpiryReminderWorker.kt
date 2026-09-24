@@ -1,6 +1,7 @@
 package com.example.vehiclechecker
 
 import android.Manifest
+import android.R
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -43,6 +44,11 @@ class ExpiryReminderWorker(
                 showNotification(vehicle.registration, message, vehicle.registration.hashCode())
             }
         }
+
+        // Purge cached JSON older than 30 days
+        val thirtyDaysAgo = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30)
+        db.cachedVehicleDao().purgeOlderThan(thirtyDaysAgo)
+
         return Result.success()
     }
 
@@ -69,7 +75,7 @@ class ExpiryReminderWorker(
         )
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_dialog_alert)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

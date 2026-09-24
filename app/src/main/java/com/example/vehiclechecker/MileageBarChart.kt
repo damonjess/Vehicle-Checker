@@ -23,9 +23,9 @@ class MileageBarChart @JvmOverloads constructor(
 
     private var entries: List<Entry> = emptyList()
 
-    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3D9186.toInt() }
+    private val barPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF00BFA5.toInt() }
     private val axisPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF8FA5B5.toInt()
+        color = 0xFFE0E0E0.toInt()
         textSize = 11f * resources.displayMetrics.density
         textAlign = Paint.Align.CENTER
     }
