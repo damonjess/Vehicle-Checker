@@ -37,6 +37,60 @@ data class MotHistoryData(
     /** Latest recorded odometer reading, in miles. */
     val lastMileageMiles: Int? get() = tests.firstNotNullOfOrNull { it.mileageMiles }
 
+    /**
+     * Checks the odometer history (newest first) for signs of possible mileage
+     * tampering: any reading lower than an earlier one, or huge unexplained jumps.
+     */
+    val mileageAnomalies: List<MileageAnomaly>
+        get() {
+            val anomalies = mutableListOf<MileageAnomaly>()
+            val readings = tests.filter { it.mileageMiles != null }
+            if (readings.size < 2) return anomalies
+
+            // 1. Odometer went DOWN between tests — the classic clocking signal
+            readings.forEachIndexed { index, test ->
+                val later = readings.getOrNull(index + 1) ?: return@forEachIndexed
+                val drop = later.mileageMiles!! - test.mileageMiles!!
+                if (drop > 0) {
+                    anomalies += MileageAnomaly(
+                        title = "Mileage decreased between tests",
+                        detail = "Odometer read ${String.format(Locale.UK, "%,d", test.mileageMiles!!)} miles " +
+                            "on ${test.dateTested}, but an earlier test on ${later.dateTested} " +
+                            "recorded ${String.format(Locale.UK, "%,d", later.mileageMiles!!)} miles — " +
+                            "$drop miles higher. This can indicate mileage tampering."
+                    )
+                }
+            }
+
+            // 2. Unrealistic annual mileage (> 50,000 miles/year between tests)
+            readings.forEachIndexed { index, test ->
+                val later = readings.getOrNull(index + 1) ?: return@forEachIndexed
+                val years = later.yearTested?.let { laterYear -> test.yearTested?.let { it - laterYear } } ?: return@forEachIndexed
+                val miles = test.mileageMiles!! - later.mileageMiles!!
+                if (years >= 1 && miles / years > 50_000) {
+                    anomalies += MileageAnomaly(
+                        title = "Very high mileage between tests",
+                        detail = "${String.format(Locale.UK, "%,d", miles)} miles recorded between " +
+                            "${later.dateTested} and ${test.dateTested} — roughly " +
+                            "${String.format(Locale.UK, "%,d", miles / years)} miles per year, " +
+                            "far above typical usage. Worth verifying the history."
+                    )
+                }
+            }
+
+            // 3. Mileage stopped being recorded after being present (rare, but a flag)
+            val missingReadings = tests.count { it.mileageMiles == null }
+            if (missingReadings > 0 && readings.isNotEmpty()) {
+                anomalies += MileageAnomaly(
+                    title = "Some tests have no mileage recorded",
+                    detail = "$missingReadings of ${tests.size} tests are missing an odometer reading. " +
+                        "Gaps in the mileage trail can make the vehicle's true usage harder to verify."
+                )
+            }
+
+            return anomalies
+        }
+
     /** Average miles per year based on first and last odometer readings. */
     val averageMilesPerYear: Int?
         get() {
@@ -72,3 +126,12 @@ data class MotTestRecord(
             return "$sign${String.format(Locale.UK, "%,d", kotlin.math.abs(diff))} miles"
         }
 }
+
+/**
+ * Flags that suggest the recorded mileage may have been tampered with ("clocked"),
+ * shown as a warning banner in the Mileage Data section.
+ */
+data class MileageAnomaly(
+    val title: String,
+    val detail: String
+)
