@@ -3,51 +3,161 @@ package com.example.vehiclechecker
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.jsoup.Connection
 import org.jsoup.Jsoup
 
 object VehicleScraper {
 
-    suspend fun scrapeVehicleData(registration: String, context: Context): String {
+    suspend fun scrapeVehicleData(registration: String, context: Context? = null): VehicleData {
         return withContext(Dispatchers.IO) {
             try {
-                // Replace this URL with your target vehicle checker URL
-                val url = "https://example-public-checker.co.uk/check?reg=$registration"
+                val cleanReg = registration.replace(" ", "").uppercase().trim()
+                if (cleanReg.isEmpty()) {
+                    return@withContext VehicleData(
+                        errorMessage = context?.getString(R.string.enter_number_plate) ?: "Please enter a number plate."
+                    )
+                }
 
-                // Fetch HTML document with custom User-Agent
-                val doc = Jsoup.connect(url)
-                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                // Step 1: GET initial GOV.UK Vehicle Enquiry Service page
+                val initialUrl = "https://vehicleenquiry.service.gov.uk/"
+                val initialResponse = Jsoup.connect(initialUrl)
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .timeout(10000)
-                    .get()
+                    .execute()
 
-                // Strategy 1: Class or ID Selectors (e.g. .make-model-title or #vehicle-make)
-                var vehicleMake = doc.select(".make-model-title, #vehicle-make, .vehicle-title").text()
-                var status = doc.select(".ulez-compliance-badge, .tax-status, .compliance-status").text()
+                var cookies = initialResponse.cookies()
+                var doc = initialResponse.parse()
 
-                // Strategy 2: Definition List / GOV.UK style summary list (<dt>Make</dt><dd>FORD</dd>)
-                if (vehicleMake.isBlank()) {
-                    vehicleMake = doc.select("dt:contains(Make) + dd, dt:contains(Vehicle) + dd").text()
+                // Find search form containing VRN input
+                val searchForm = doc.select("form").find { it.select("input[name*=vrn]").isNotEmpty() }
+                    ?: doc.select("form").last()
+                val searchAction = searchForm?.absUrl("action") ?: "https://vehicleenquiry.service.gov.uk/vehicle-enquiry/save?locale=en"
+
+                val searchInputs = searchForm?.select("input") ?: emptyList()
+                val searchData = mutableMapOf<String, String>()
+                for (input in searchInputs) {
+                    val name = input.attr("name")
+                    val value = input.attr("value")
+                    if (name.isNotEmpty()) {
+                        searchData[name] = value
+                    }
                 }
-                if (status.isBlank()) {
-                    status = doc.select("dt:contains(Status) + dd, dt:contains(MOT) + dd, dt:contains(Tax) + dd").text()
+                val vrnKey = searchData.keys.firstOrNull { it.contains("vrn") }
+                    ?: "wizard_vehicle_enquiry_capture_vrn[vrn]"
+                searchData[vrnKey] = cleanReg
+
+                // Step 2: POST registration to retrieve vehicle confirmation page
+                val confirmResponse = Jsoup.connect(searchAction)
+                    .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .cookies(cookies)
+                    .data(searchData)
+                    .method(Connection.Method.POST)
+                    .timeout(10000)
+                    .execute()
+
+                cookies = (cookies + confirmResponse.cookies()).toMutableMap()
+                doc = confirmResponse.parse()
+
+                var make = ""
+                var colour = ""
+                var fuelType = ""
+                var year = ""
+                var taxStatus = ""
+                var motStatus = ""
+
+                // Extract summary data from step 2 (confirmation page)
+                val confirmKeys = doc.select(".govuk-summary-list__key, dt, .summary-item")
+                val confirmValues = doc.select(".govuk-summary-list__value, dd, .summary-value")
+                for (i in 0 until minOf(confirmKeys.size, confirmValues.size)) {
+                    val key = confirmKeys[i].text().lowercase()
+                    val value = confirmValues[i].text()
+                    if (key.contains("make")) make = value
+                    if (key.contains("colour") || key.contains("color")) colour = value
                 }
 
-                // Strategy 3: Table Row Selectors (<tr><td>Make</td><td>FORD</td></tr>)
-                if (vehicleMake.isBlank()) {
-                    vehicleMake = doc.select("tr:contains(Make) td:last-child").text()
-                }
-                if (status.isBlank()) {
-                    status = doc.select("tr:contains(Tax) td:last-child, tr:contains(Status) td:last-child").text()
+                // Step 3: POST confirmation choice ("Yes") to retrieve full Tax & MOT status
+                val confirmForm = doc.select("form").find { it.select("input[type=radio]").isNotEmpty() }
+                if (confirmForm != null) {
+                    val confirmAction = confirmForm.absUrl("action").ifEmpty { searchAction }
+                    val confirmInputs = confirmForm.select("input")
+                    val confirmData = mutableMapOf<String, String>()
+                    for (input in confirmInputs) {
+                        val name = input.attr("name")
+                        val value = input.attr("value")
+                        if (name.isNotEmpty() && (input.attr("type") != "radio")) {
+                            confirmData[name] = value
+                        }
+                    }
+                    val radioName = confirmForm.select("input[type=radio]").attr("name")
+                        .ifEmpty { "wizard_vehicle_enquiry_capture_confirm_vehicle[confirmed]" }
+                    confirmData[radioName] = "Yes"
+
+                    val finalResponse = Jsoup.connect(confirmAction)
+                        .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                        .cookies(cookies)
+                        .data(confirmData)
+                        .method(Connection.Method.POST)
+                        .timeout(10000)
+                        .execute()
+
+                    doc = finalResponse.parse()
                 }
 
-                if (vehicleMake.isBlank() && status.isBlank()) {
-                    return@withContext context.getString(R.string.no_data_found, registration)
+                // Extract full vehicle details from final page
+                val finalKeys = doc.select(".govuk-summary-list__key, dt, .summary-item")
+                val finalValues = doc.select(".govuk-summary-list__value, dd, .summary-value")
+                for (i in 0 until minOf(finalKeys.size, finalValues.size)) {
+                    val key = finalKeys[i].text().lowercase()
+                    val value = finalValues[i].text()
+                    if (key.contains("make") && make.isBlank()) make = value
+                    if ((key.contains("colour") || key.contains("color")) && colour.isBlank()) colour = value
+                    if (key.contains("fuel") && fuelType.isBlank()) fuelType = value
+                    if ((key.contains("year") || key.contains("first registration")) && year.isBlank()) year = value
+                    if (key.contains("vehicle status") && taxStatus.isBlank()) taxStatus = value
                 }
 
-                return@withContext context.getString(R.string.vehicle_status, vehicleMake, status)
+                // Extract Tax and MOT status banners if present
+                val pageText = doc.body().text()
+                if (taxStatus.isBlank()) {
+                    if (pageText.contains("Taxed", ignoreCase = true)) {
+                        taxStatus = "Taxed"
+                    } else if (pageText.contains("Untaxed", ignoreCase = true)) {
+                        taxStatus = "Untaxed"
+                    } else if (pageText.contains("SORN", ignoreCase = true)) {
+                        taxStatus = "SORN"
+                    }
+                }
+
+                if (motStatus.isBlank()) {
+                    if (pageText.contains("valid MOT certificate", ignoreCase = true) || pageText.contains("MOT Valid", ignoreCase = true)) {
+                        motStatus = "MOT Valid"
+                    } else if (pageText.contains("No MOT", ignoreCase = true) || pageText.contains("MOT Expired", ignoreCase = true)) {
+                        motStatus = "MOT Expired / No MOT"
+                    }
+                }
+
+                if (make.isBlank() && taxStatus.isBlank()) {
+                    return@withContext VehicleData(
+                        errorMessage = context?.getString(R.string.no_data_found, cleanReg)
+                            ?: "No data found for registration: $cleanReg"
+                    )
+                }
+
+                return@withContext VehicleData(
+                    make = make,
+                    colour = colour,
+                    fuelType = fuelType,
+                    year = year,
+                    taxStatus = taxStatus,
+                    motStatus = motStatus
+                )
 
             } catch (e: Exception) {
                 e.printStackTrace()
-                return@withContext context.getString(R.string.error_message, e.message ?: "Unknown error")
+                return@withContext VehicleData(
+                    errorMessage = context?.getString(R.string.error_message, e.message ?: "Unknown error")
+                        ?: "Error: ${e.message ?: "Unknown error"}"
+                )
             }
         }
     }

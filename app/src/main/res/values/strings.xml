@@ -1,8 +1,10 @@
 <resources>
     <string name="app_name">Vehicle Checker</string>
-    <string name="scraping">Scraping…</string>
+    <string name="scraping">Checking vehicle details…</string>
     <string name="enter_number_plate">Please enter a number plate.</string>
+    <string name="enter_number_plate_hint">Enter UK Registration (e.g. LC63XRO)</string>
+    <string name="check_vehicle_button">Check Vehicle</string>
+    <string name="results_placeholder">Results will appear here…</string>
     <string name="no_data_found">No data found for registration: %1$s</string>
-    <string name="vehicle_status">Vehicle: %1$s\nStatus: %2$s</string>
     <string name="error_message">Error: %1$s</string>
 </resources>

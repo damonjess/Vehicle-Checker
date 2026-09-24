@@ -1,17 +1,19 @@
 package com.example.vehiclechecker
 
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
-import org.junit.Assert.*
-
-/**
- * Example local unit test, which will execute on the development machine (host).
- *
- * See [testing documentation](http://d.android.com/tools/testing).
- */
 class ExampleUnitTest {
     @Test
-    fun addition_isCorrect() {
-        assertEquals(4, 2 + 2)
+    fun testScrapeVehicleDataWithRealReg() = runBlocking {
+        val result = VehicleScraper.scrapeVehicleData("LC63XRO")
+        println("Scrape Result:\n$result")
+        assertNull("Error message should be null", result.errorMessage)
+        assertTrue("Make should contain TOYOTA", result.make.contains("TOYOTA", ignoreCase = true))
+        assertTrue("Colour should contain SILVER", result.colour.contains("SILVER", ignoreCase = true))
+        assertTrue("FuelType should contain PETROL", result.fuelType.contains("PETROL", ignoreCase = true))
+        assertTrue("TaxStatus should contain Tax", result.taxStatus.contains("Tax", ignoreCase = true))
     }
 }
