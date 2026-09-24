@@ -11,16 +11,17 @@
     <color name="brand_yellow_text">#FF1A1A1A</color>
 
     <!-- Status banners -->
-    <color name="status_success">#FF3D8B58</color>
-    <color name="status_warn">#FFE86C00</color>
+    <color name="status_success">#FF2E7D32</color>
+    <color name="status_warn">#FFE65100</color>
     <color name="status_danger">#FFC62828</color>
     <color name="insights_panel">#FF274B63</color>
     <color name="stat_box">#FF3A5C74</color>
     <color name="mileage_table">#FF3D9186</color>
 
-    <!-- Surfaces -->
+    <!-- Surfaces & text -->
     <color name="screen_bg">#FFF6F8F7</color>
+    <color name="card_bg">#FFFFFFFF</color>
     <color name="card_stroke">#FFE3E8E6</color>
-    <color name="text_primary">#FF1F2A2E</color>
-    <color name="text_secondary">#FF6B7A80</color>
+    <color name="text_primary">#FF10181A</color>
+    <color name="text_secondary">#FF526066</color>
 </resources>

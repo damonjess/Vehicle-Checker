@@ -90,6 +90,33 @@ object MotHistoryScraper {
                 )
             }
 
+            // Safety recalls section
+            var recallStatus = RecallStatus.UNKNOWN
+            var recallDetail = ""
+            doc.selectFirst("#recalls-content")?.let { recallsEl ->
+                val recallText = recallsEl.text().trim()
+                val testId = recallsEl.selectFirst("[data-test-id]")?.attr("data-test-id") ?: ""
+                when {
+                    testId.contains("outstanding") ||
+                        recallText.contains("outstanding recall", true) ||
+                        recallText.contains("has not been fixed", true) -> {
+                        recallStatus = RecallStatus.OUTSTANDING
+                        recallDetail = recallText
+                    }
+                    testId.contains("complete") || testId.contains("recall-no") ||
+                        recallText.contains("no recalls", true) ||
+                        recallText.contains("has not been recalled", true) ||
+                        recallText.contains("no outstanding", true) -> {
+                        recallStatus = RecallStatus.NONE
+                        recallDetail = recallText
+                    }
+                    else -> {
+                        recallStatus = RecallStatus.UNKNOWN
+                        recallDetail = recallText.ifBlank { "Recall information is not available for this vehicle." }
+                    }
+                }
+            }
+
             // No records at all (e.g. brand new vehicle)
             if (tests.isEmpty() && motValidUntil.isBlank() && header.contains("no MOT", ignoreCase = true)) {
             return MotHistoryData(
@@ -115,7 +142,9 @@ object MotHistoryScraper {
                 fuelType = fuelType,
                 dateRegistered = dateRegistered,
                 motValidUntil = motValidUntil,
-                tests = withDiffs
+                tests = withDiffs,
+                recallStatus = recallStatus,
+                recallDetail = recallDetail
             )
         } catch (e: Exception) {
             e.printStackTrace()

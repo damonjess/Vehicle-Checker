@@ -8,5 +8,8 @@ data class VehicleEntity(
     @PrimaryKey val registration: String,
     val make: String,
     val colour: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isFavourite: Boolean = false,
+    val taxDueEpochMs: Long? = null,
+    val motExpiryEpochMs: Long? = null
 )

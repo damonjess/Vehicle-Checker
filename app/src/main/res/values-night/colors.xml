@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark theme surfaces & text -->
+    <color name="screen_bg">#FF12181B</color>
+    <color name="card_bg">#FF1E262B</color>
+    <color name="card_stroke">#FF2A3338</color>
+    <color name="text_primary">#FFFFFFFF</color>
+    <color name="text_secondary">#FFB0BEC5</color>
+
+    <!-- Brand -->
+    <color name="brand_nav">#FF122B38</color>
+    <color name="brand_teal">#FF00BFA5</color>
+    <color name="brand_yellow">#FFFCE500</color>
+    <color name="brand_yellow_text">#FF1A1A1A</color>
+</resources>

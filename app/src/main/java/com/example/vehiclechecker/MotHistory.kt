@@ -14,6 +14,8 @@ data class MotHistoryData(
     val dateRegistered: String = "",
     val motValidUntil: String = "",
     val tests: List<MotTestRecord> = emptyList(),
+    val recallStatus: RecallStatus = RecallStatus.UNKNOWN,
+    val recallDetail: String = "",
     val errorMessage: String? = null
 ) {
     val passCount: Int get() = tests.count { it.isPass && it.advisories.isEmpty() }
@@ -135,3 +137,5 @@ data class MileageAnomaly(
     val title: String,
     val detail: String
 )
+
+enum class RecallStatus { NONE, OUTSTANDING, UNKNOWN }

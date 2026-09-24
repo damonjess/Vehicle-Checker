@@ -129,6 +129,9 @@ object VehicleScraper {
         var vehicleStatus = ""
         var wheelplan = ""
         var lastV5cIssued = ""
+        var euroStatus = ""
+        var typeApproval = ""
+        var exportMarker = ""
         var taxDueDate = ""
         var motStatus = ""
         var motExpiryDate = ""
@@ -148,6 +151,9 @@ object VehicleScraper {
                 "vehicle_status" -> vehicleStatus = value
                 "wheelplan" -> wheelplan = value
                 "date_of_last_v5c_issued" -> lastV5cIssued = value
+                "euro_status" -> euroStatus = value
+                "vehicle_type_approval" -> typeApproval = value
+                "export_marker" -> exportMarker = value
                 else -> {
                     when {
                         key.contains("make") -> if (makeValue.isBlank()) makeValue = value
@@ -160,6 +166,9 @@ object VehicleScraper {
                         key.contains("vehicle status") -> vehicleStatus = value
                         key.contains("wheelplan") -> wheelplan = value
                         key.contains("v5c") -> lastV5cIssued = value
+                        key.contains("euro") -> euroStatus = value
+                        key.contains("type approval") -> typeApproval = value
+                        key.contains("export") -> exportMarker = value
                     }
                 }
             }
@@ -174,7 +183,8 @@ object VehicleScraper {
                 isUntaxed -> vehicleStatus = "Untaxed"
                 vehicleStatus.isBlank() -> vehicleStatus = "Taxed"
             }
-            taxDueDate = TAX_DUE_REGEX.find(text)?.value ?: ""
+            taxDueDate = TAX_DUE_REGEX.find(text)?.groupValues?.get(1)
+                ?: TAX_DUE_REGEX.find(text)?.value ?: ""
         }
 
         // MOT banner: green panel = valid, red panel = expired/no MOT
@@ -182,7 +192,8 @@ object VehicleScraper {
             val isValid = panel.hasClass("govuk-panel--confirmation")
             val text = panel.text()
             motStatus = if (isValid) "Valid" else "Expired"
-            motExpiryDate = EXPIRES_REGEX.find(text)?.value ?: ""
+            motExpiryDate = EXPIRES_REGEX.find(text)?.groupValues?.get(1)
+                ?: EXPIRES_REGEX.find(text)?.value ?: ""
         }
 
         if (makeValue.isBlank() && vehicleStatus.isBlank()) {
@@ -204,6 +215,9 @@ object VehicleScraper {
             vehicleStatus = vehicleStatus,
             wheelplan = wheelplan,
             lastV5cIssued = lastV5cIssued,
+            euroStatus = euroStatus,
+            typeApproval = typeApproval,
+            exportMarker = exportMarker,
             taxStatus = vehicleStatus,
             taxDueDate = taxDueDate,
             motStatus = motStatus,
@@ -211,6 +225,6 @@ object VehicleScraper {
         )
     }
 
-    private val TAX_DUE_REGEX = Regex("Tax due:\\s*\\d{1,2} \\w+ \\d{4}", RegexOption.IGNORE_CASE)
-    private val EXPIRES_REGEX = Regex("Expires:\\s*\\d{1,2} \\w+ \\d{4}", RegexOption.IGNORE_CASE)
+    private val TAX_DUE_REGEX = Regex("Tax due:\\s*(\\d{1,2} \\w+ \\d{4})", RegexOption.IGNORE_CASE)
+    private val EXPIRES_REGEX = Regex("Expires:\\s*(\\d{1,2} \\w+ \\d{4})", RegexOption.IGNORE_CASE)
 }
