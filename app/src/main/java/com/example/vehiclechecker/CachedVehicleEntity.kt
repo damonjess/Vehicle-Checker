@@ -9,7 +9,8 @@ data class CachedVehicleEntity(
     @PrimaryKey val registration: String,
     val vehicleJson: String,
     val motJson: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val aiReport: String? = null
 ) {
     companion object {
         private val gson = Gson()

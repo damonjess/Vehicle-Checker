@@ -16,6 +16,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import io.noties.markwon.Markwon
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -32,6 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvError: TextView
     private lateinit var resultsContainer: LinearLayout
     private lateinit var recentSearchesContainer: LinearLayout
+    private lateinit var markwon: Markwon
 
     private val scanLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -46,6 +48,8 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        markwon = Markwon.create(this)
 
         btnCheck = findViewById(R.id.btnCheck)
         etPlate = findViewById(R.id.etPlate)
@@ -117,6 +121,39 @@ class MainActivity : AppCompatActivity() {
                 findViewById<Button>(R.id.btnDeleteNote).visibility = View.GONE
             }
         }
+
+        // AI Mechanic Analysis
+        val btnAskAi = findViewById<Button>(R.id.btnAskAi)
+        val tvAiResult = findViewById<TextView>(R.id.tvAiResult)
+        val aiProgressBar = findViewById<ProgressBar>(R.id.aiProgressBar)
+
+        btnAskAi.setOnClickListener {
+            val vehicle = currentVehicle
+            if (vehicle == null) return@setOnClickListener
+
+            // Update UI to loading state
+            btnAskAi.isEnabled = false
+            tvAiResult.visibility = View.GONE
+            aiProgressBar.visibility = View.VISIBLE
+
+            lifecycleScope.launch {
+                // Ask Gemini!
+                val analysis = VehicleAiAnalyst.analyze(vehicle, currentMot)
+
+                val existingCache = db.cachedVehicleDao().get(currentReg)
+                if (existingCache != null) {
+                    // Update the existing cache with the new report
+                    db.cachedVehicleDao().upsert(existingCache.copy(aiReport = analysis))
+                }
+
+                // Update UI with results
+                aiProgressBar.visibility = View.GONE
+                markwon.setMarkdown(tvAiResult, analysis)
+                tvAiResult.visibility = View.VISIBLE
+                btnAskAi.text = "Refresh Analysis"
+                btnAskAi.isEnabled = true
+            }
+        }
     }
 
     private fun updateFavouriteIcon(favourite: Boolean) {
@@ -163,6 +200,14 @@ class MainActivity : AppCompatActivity() {
         progressBar.visibility = View.VISIBLE
         btnCheck.isEnabled = false
 
+        // Reset AI Analyst UI state
+        findViewById<TextView>(R.id.tvAiResult).visibility = View.GONE
+        findViewById<ProgressBar>(R.id.aiProgressBar).visibility = View.GONE
+        findViewById<Button>(R.id.btnAskAi).apply {
+            text = "Analyze Car"
+            isEnabled = true
+        }
+
         lifecycleScope.launch {
             // Offline cache: show any previously saved result instantly, then refresh live
             val cached = db.cachedVehicleDao().get(clean.uppercase())
@@ -178,6 +223,17 @@ class MainActivity : AppCompatActivity() {
                 resultsContainer.visibility = View.VISIBLE
                 loadNote(currentReg)
                 showFavouriteState(currentReg)
+
+                val tvAiResult = findViewById<TextView>(R.id.tvAiResult)
+                val btnAskAi = findViewById<Button>(R.id.btnAskAi)
+                if (!cached.aiReport.isNullOrBlank()) {
+                    markwon.setMarkdown(tvAiResult, cached.aiReport)
+                    tvAiResult.visibility = View.VISIBLE
+                    btnAskAi.text = "Refresh Analysis"
+                } else {
+                    tvAiResult.visibility = View.GONE
+                    btnAskAi.text = "Analyze Car"
+                }
             }
 
             // DVLA details via the free GOV.UK enquiry service
