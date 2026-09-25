@@ -14,3 +14,18 @@
 .cxx
 local.properties
 .freebuff/
+
+# Key stores & Certificates
+keystore.jks
+*.jks
+*.keystore
+*.p12
+*.pepk
+*.pem
+*.key
+
+# Build outputs & Binaries
+*.apk
+*.aab
+/app/release/
+/app/build/
