@@ -90,6 +90,30 @@ data class MotHistoryData(
                 )
             }
 
+            // 4. Low-Usage Diesel Warning (DPF/EGR Risk)
+            if (fuelType.contains("DIESEL", ignoreCase = true)) {
+                readings.forEachIndexed { index, test ->
+                    val earlier = readings.getOrNull(index + 1) ?: return@forEachIndexed
+
+                    val years = test.yearTested?.let { currentYear ->
+                        earlier.yearTested?.let { prevYear -> currentYear - prevYear }
+                    } ?: return@forEachIndexed
+
+                    val miles = test.mileageMiles!! - earlier.mileageMiles!!
+
+                    // If average usage drops below 1,000 miles per year between tests
+                    if (years >= 1 && (miles / years) < 1000 && miles > 0) {
+                        // Prevent duplicate warnings if multiple low-usage years exist
+                        if (anomalies.none { it.title.contains("Low usage") }) {
+                            anomalies += MileageAnomaly(
+                                title = "Low usage detected",
+                                detail = "Only ${String.format(Locale.UK, "%,d", miles)} miles recorded over $years year(s) ending in ${test.yearTested}. Vehicles driven very short distances are highly prone to clogged DPF/EGR valves."
+                            )
+                        }
+                    }
+                }
+            }
+
             return anomalies
         }
 
@@ -104,6 +128,38 @@ data class MotHistoryData(
             val miles = (last.mileageMiles ?: 0) - (first.mileageMiles ?: 0)
             if (miles <= 0) return null
             return (miles.toDouble() / years).roundToLong().toInt()
+        }
+
+    /** Compares the last 3 tests against the vehicle's historical baseline. */
+    val conditionTrend: ConditionTrend
+        get() {
+            // Need enough data to establish a baseline
+            if (tests.size < 4) return ConditionTrend.INSUFFICIENT_DATA
+
+            val recent3 = tests.take(3)
+            val olderTests = tests.drop(3)
+
+            val recentFails = recent3.count { !it.isPass }
+            val recentCleanPasses = recent3.count { it.isPass && it.advisories.isEmpty() }
+
+            val olderPassRate = olderTests.count { it.isPass } * 100.0 / olderTests.size
+            val recentPassRate = recent3.count { it.isPass } * 100.0 / recent3.size
+
+            return when {
+                // Degrading: Failed multiple times recently (e.g., bunching of fails)
+                recentFails >= 2 -> ConditionTrend.DEGRADING
+
+                // Degrading: Recent pass rate is significantly worse than the old pass rate
+                recentPassRate < olderPassRate - 20 -> ConditionTrend.DEGRADING
+
+                // Improving: Last 3 tests are totally clean, BUT lifetime pass rate is below 80% (meaning it used to be bad)
+                recentCleanPasses == 3 && passRatePercent < 80 -> ConditionTrend.IMPROVING
+
+                // Improving: Recent pass rate is significantly better than the old pass rate
+                recentPassRate > olderPassRate + 20 -> ConditionTrend.IMPROVING
+
+                else -> ConditionTrend.STABLE
+            }
         }
 }
 
@@ -139,3 +195,5 @@ data class MileageAnomaly(
 )
 
 enum class RecallStatus { NONE, OUTSTANDING, UNKNOWN }
+
+enum class ConditionTrend { IMPROVING, DEGRADING, STABLE, INSUFFICIENT_DATA }

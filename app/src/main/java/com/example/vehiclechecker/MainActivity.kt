@@ -1,9 +1,12 @@
 package com.example.vehiclechecker
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -154,6 +157,11 @@ class MainActivity : AppCompatActivity() {
                 btnAskAi.isEnabled = true
             }
         }
+
+        findViewById<Button>(R.id.btnAddService).setOnClickListener {
+            if (currentReg.isEmpty()) return@setOnClickListener
+            showAddServiceDialog()
+        }
     }
 
     private fun updateFavouriteIcon(favourite: Boolean) {
@@ -183,6 +191,110 @@ class MainActivity : AppCompatActivity() {
             findViewById<EditText>(R.id.etNote).setText(note?.note ?: "")
             findViewById<Button>(R.id.btnDeleteNote).visibility =
                 if (note != null) View.VISIBLE else View.GONE
+        }
+    }
+
+    private fun showAddServiceDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 40, 50, 10)
+        }
+
+        val dateInput = EditText(this).apply { hint = "Date (e.g. 12 Oct 2025)" }
+        val mileageInput = EditText(this).apply { hint = "Mileage"; inputType = InputType.TYPE_CLASS_NUMBER }
+        val descInput = EditText(this).apply { hint = "Description (e.g. Oil change)" }
+        val costInput = EditText(this).apply { hint = "Cost (£)" }
+
+        layout.addView(dateInput)
+        layout.addView(mileageInput)
+        layout.addView(descInput)
+        layout.addView(costInput)
+
+        AlertDialog.Builder(this)
+            .setTitle("Add Service Log")
+            .setView(layout)
+            .setPositiveButton("Save") { _, _ ->
+                val log = ServiceLogEntity(
+                    registration = currentReg,
+                    date = dateInput.text.toString(),
+                    mileage = mileageInput.text.toString(),
+                    description = descInput.text.toString(),
+                    cost = costInput.text.toString()
+                )
+                lifecycleScope.launch {
+                    db.serviceLogDao().insertLog(log)
+                    loadServiceLogs() // Refresh the UI
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun loadServiceLogs() {
+        if (currentReg.isEmpty()) return
+
+        lifecycleScope.launch {
+            val logs = db.serviceLogDao().getLogs(currentReg)
+            val container = findViewById<LinearLayout>(R.id.serviceLogsContainer)
+            container.removeAllViews()
+
+            if (logs.isEmpty()) {
+                val emptyText = TextView(this@MainActivity).apply {
+                    text = "No service history logged."
+                    setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+                    textSize = 13f
+                }
+                container.addView(emptyText)
+                return@launch
+            }
+
+            logs.forEach { log ->
+                val row = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, 16, 0, 16)
+                }
+
+                val header = TextView(this@MainActivity).apply {
+                    text = "${log.date}  ·  ${log.mileage} miles  ·  £${log.cost}"
+                    textSize = 12f
+                    setTextColor(ContextCompat.getColor(context, R.color.text_secondary))
+                }
+                val desc = TextView(this@MainActivity).apply {
+                    text = log.description
+                    textSize = 15f
+                    setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+                    setTypeface(null, Typeface.BOLD)
+                }
+
+                row.addView(header)
+                row.addView(desc)
+
+                // Optional: Long click to delete
+                row.setOnLongClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Delete Log?")
+                        .setPositiveButton("Yes") { _, _ ->
+                            lifecycleScope.launch {
+                                db.serviceLogDao().deleteLog(log.id)
+                                loadServiceLogs()
+                            }
+                        }
+                        .setNegativeButton("No", null)
+                        .show()
+                    true
+                }
+
+                container.addView(row)
+
+                // Add a divider
+                val divider = View(this@MainActivity).apply {
+                    layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply {
+                        setMargins(0, 8, 0, 8)
+                    }
+                    setBackgroundColor(0xFFE7E9EA.toInt())
+                }
+                container.addView(divider)
+            }
         }
     }
 
@@ -223,6 +335,7 @@ class MainActivity : AppCompatActivity() {
                 resultsContainer.visibility = View.VISIBLE
                 loadNote(currentReg)
                 showFavouriteState(currentReg)
+                loadServiceLogs()
 
                 val tvAiResult = findViewById<TextView>(R.id.tvAiResult)
                 val btnAskAi = findViewById<Button>(R.id.btnAskAi)
@@ -256,6 +369,7 @@ class MainActivity : AppCompatActivity() {
             saveAndShowHistory(result)
             loadNote(currentReg)
             showFavouriteState(currentReg)
+            loadServiceLogs()
 
             // Fresh MOT history + cache the combined payload for offline use
             val mot = MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
@@ -315,7 +429,34 @@ class MainActivity : AppCompatActivity() {
         bindRow(R.id.rowCo2, "CO₂ emissions", result.co2Emissions)
         bindRow(R.id.rowColour, "Colour", result.colour)
         bindRow(R.id.rowWheelplan, "Wheelplan", result.wheelplan)
-        bindRow(R.id.rowLastV5c, "Last V5C issued", result.lastV5cIssued)
+
+        // 1. Calculate the age of the V5C logbook
+        val v5cEpoch = DateUtils.parseFlexible(result.lastV5cIssued)
+        var v5cDisplay = result.lastV5cIssued
+
+        if (v5cEpoch != null) {
+            val daysAgo = -DateUtils.daysUntil(v5cEpoch) // Negative because it's in the past
+            val monthsAgo = daysAgo / 30
+
+            // 2. Append the Red Flag Warning if it's suspiciously new
+            if (monthsAgo < 6) {
+                v5cDisplay += "\n⚠️ Issued $monthsAgo months ago. (High-risk turnover. Ask seller why they are selling so soon)."
+            } else {
+                v5cDisplay += "\n✓ Held for $monthsAgo months."
+            }
+        }
+
+        // 3. Bind the updated string to the row
+        bindRow(R.id.rowLastV5c, "Last V5C issued", v5cDisplay)
+
+        findViewById<View>(R.id.rowLastV5c)?.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("V5C Logbook Check")
+                .setMessage("When viewing this car, check the date on the physical paper V5C.\n\nIt MUST match '${result.lastV5cIssued}'. If the paper has an older date, the seller is showing you an invalid logbook and cannot legally transfer ownership.")
+                .setPositiveButton("Got it", null)
+                .show()
+        }
+
         bindRow(R.id.rowEuroStatus, "Euro status", result.euroStatus)
         bindRow(R.id.rowTypeApproval, "Type approval", result.typeApproval)
         bindRow(R.id.rowExport, "Exported", result.exportMarker)
@@ -419,7 +560,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun bindMotInsights(history: MotHistoryData) {
         findViewById<TextView>(R.id.tvGapYears).text = history.gapYears.toString()
-        findViewById<TextView>(R.id.tvPassRate).text = "${history.passRatePercent} %"
+
+        val passRateTv = findViewById<TextView>(R.id.tvPassRate)
+
+        val trendText = when (history.conditionTrend) {
+            ConditionTrend.IMPROVING -> "  📈 Improving"
+            ConditionTrend.DEGRADING -> "  📉 Degrading"
+            ConditionTrend.STABLE -> "  ➖ Stable"
+            ConditionTrend.INSUFFICIENT_DATA -> ""
+        }
+
+        passRateTv.text = "${history.passRatePercent}%$trendText"
+
+        // Optional: Color the trend text
+        when (history.conditionTrend) {
+            ConditionTrend.IMPROVING -> passRateTv.setTextColor(ContextCompat.getColor(this, R.color.status_success))
+            ConditionTrend.DEGRADING -> passRateTv.setTextColor(ContextCompat.getColor(this, R.color.status_danger))
+            else -> passRateTv.setTextColor(ContextCompat.getColor(this, R.color.white))
+        }
 
         // Pass / Pass+Advise / Fail stat rows with colored dots
         val statsContainer = findViewById<LinearLayout>(R.id.passStatsContainer)
@@ -462,7 +620,8 @@ class MainActivity : AppCompatActivity() {
         testsContainer.removeAllViews()
         val density = resources.displayMetrics.density
 
-        history.tests.take(10).forEach { test ->
+        history.tests.take(10).forEachIndexed { index, test ->
+            val previousTest = history.tests.getOrNull(index + 1)
             val row = layoutInflater.inflate(R.layout.view_mot_test_row, testsContainer, false)
             val bannerRoot = row.findViewById<View>(R.id.bannerRoot)
             val detailRoot = row.findViewById<View>(R.id.detailRoot)
@@ -487,18 +646,44 @@ class MainActivity : AppCompatActivity() {
             // Advisories
             val advisoriesSection = row.findViewById<View>(R.id.advisoriesSection)
             val advisoriesContainer = row.findViewById<LinearLayout>(R.id.advisoriesContainer)
+
             if (test.advisories.isEmpty()) {
                 advisoriesSection.visibility = View.GONE
             } else {
                 advisoriesSection.visibility = View.VISIBLE
                 advisoriesContainer.removeAllViews()
+
                 test.advisories.forEach { advisory ->
+                    // 1. Print the standard advisory
                     val tv = TextView(this).apply {
                         text = "• $advisory"
                         textSize = 13f
                         setTextColor(ContextCompat.getColor(context, R.color.text_primary))
                     }
                     advisoriesContainer.addView(tv)
+
+                    // 2. The String Matching Script
+                    val normalize = { s: String -> s.lowercase().replace(Regex("[^a-z0-9]"), "") }
+                    val currentNorm = normalize(advisory)
+
+                    val isIgnored = previousTest?.advisories?.any { pastAdv ->
+                        val pastNorm = normalize(pastAdv)
+                        currentNorm.isNotEmpty() && (currentNorm.contains(pastNorm) || pastNorm.contains(currentNorm))
+                    } == true
+
+                    // 3. Inject the warning UI if a match is found
+                    if (isIgnored) {
+                        val pastYear = previousTest.yearTested ?: "a previous test"
+                        val warningTv = TextView(this).apply {
+                            text = "⚠️ Repeated Advisory: This issue was also flagged in $pastYear and has been left unrepaired."
+                            textSize = 12f
+                            setPadding(30, 4, 0, 12)
+                            // Using status_warn (Orange) so it is readable on both Light and Dark backgrounds
+                            setTextColor(ContextCompat.getColor(context, R.color.status_warn))
+                            setTypeface(null, Typeface.BOLD_ITALIC)
+                        }
+                        advisoriesContainer.addView(warningTv)
+                    }
                 }
             }
 
