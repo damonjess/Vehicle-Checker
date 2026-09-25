@@ -485,6 +485,65 @@ class MainActivity : AppCompatActivity() {
         )
         findViewById<TextView>(R.id.tvComplianceNote).text =
             "${taxEstimate.note}. ${ulez.detail} Rates are estimates — confirm on GOV.UK / TfL."
+
+        // Outstanding Finance & Logbook Risk Check
+        bindFinanceCheck(result)
+
+        // Keeper & Ownership History Timeline
+        bindKeeperHistory(result)
+    }
+
+    private fun bindKeeperHistory(result: VehicleData) {
+        val keeperInfo = KeeperHistoryCalculator.calculate(result)
+
+        val tvBadge = findViewById<TextView>(R.id.tvKeeperBadge)
+        val tvFirstReg = findViewById<TextView>(R.id.tvKeeperFirstReg)
+        val tvTotalAge = findViewById<TextView>(R.id.tvTotalVehicleAge)
+        val tvV5cDate = findViewById<TextView>(R.id.tvKeeperV5cDate)
+        val tvDuration = findViewById<TextView>(R.id.tvKeeperDuration)
+        val tvNote = findViewById<TextView>(R.id.tvKeeperNote)
+
+        tvBadge.text = keeperInfo.stabilityBadgeText
+        tvFirstReg.text = keeperInfo.firstRegisteredDate
+        tvTotalAge.text = keeperInfo.totalVehicleAgeText
+        tvV5cDate.text = keeperInfo.currentV5cDate
+        tvDuration.text = keeperInfo.currentKeeperDurationText
+        tvNote.text = keeperInfo.stabilityNote
+    }
+
+    private fun bindFinanceCheck(result: VehicleData) {
+        val finance = FinanceChecker.checkFinanceStatus(result)
+
+        val tvRiskBadge = findViewById<TextView>(R.id.tvFinanceRiskBadge)
+        val tvStatusTitle = findViewById<TextView>(R.id.tvFinanceStatusTitle)
+        val tvStatusDetail = findViewById<TextView>(R.id.tvFinanceStatusDetail)
+        val btnChecklist = findViewById<View>(R.id.btnFinanceChecklist)
+        val btnHpiCheck = findViewById<View>(R.id.btnRunHpiCheck)
+
+        tvRiskBadge.text = finance.riskBadgeText
+        tvRiskBadge.setBackgroundColor(
+            when (finance.riskLevel) {
+                FinanceChecker.RiskLevel.LOW -> ContextCompat.getColor(this, R.color.status_success)
+                FinanceChecker.RiskLevel.MEDIUM -> ContextCompat.getColor(this, R.color.status_warn)
+                FinanceChecker.RiskLevel.HIGH -> ContextCompat.getColor(this, R.color.status_danger)
+            }
+        )
+
+        tvStatusTitle.text = finance.statusTitle
+        tvStatusDetail.text = finance.statusDetail
+
+        btnChecklist.setOnClickListener {
+            val message = finance.checklist.joinToString("\n\n")
+            AlertDialog.Builder(this)
+                .setTitle("Finance & Ownership Clearance Checklist")
+                .setMessage(message)
+                .setPositiveButton("Understood", null)
+                .show()
+        }
+
+        btnHpiCheck.setOnClickListener {
+            FinanceChecker.openHpiRegisterCheck(this, result.registration)
+        }
     }
 
     private fun bindMotSection(history: MotHistoryData) {

@@ -101,6 +101,20 @@ object ReportPdfBuilder {
         row("MOT status", vehicle.motStatus)
         row("MOT expiry", vehicle.motExpiryDate)
 
+        val finance = FinanceChecker.checkFinanceStatus(vehicle)
+        heading("Outstanding Finance & Logbook Check")
+        row("Risk Level", finance.riskBadgeText)
+        row("Status", finance.statusTitle)
+        row("V5C Issue Record", finance.v5cAgeText)
+
+        val keeperInfo = KeeperHistoryCalculator.calculate(vehicle)
+        heading("Keeper & Ownership Timeline")
+        row("First Registered", keeperInfo.firstRegisteredDate)
+        row("Total Vehicle Age", keeperInfo.totalVehicleAgeText)
+        row("Current V5C Issued", keeperInfo.currentV5cDate)
+        row("Current Keeper Duration", keeperInfo.currentKeeperDurationText)
+        row("Keeper Status", keeperInfo.stabilityBadgeText)
+
         if (mot != null) {
             heading("MOT History (${mot.tests.size} tests)")
             if (mot.tests.isEmpty()) {
