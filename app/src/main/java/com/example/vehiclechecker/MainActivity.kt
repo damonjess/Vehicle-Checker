@@ -20,8 +20,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import io.noties.markwon.Markwon
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
@@ -29,6 +32,7 @@ class MainActivity : AppCompatActivity() {
 
     private val db by lazy { AppDatabase.getDatabase(this) }
 
+    private var searchJob: Job? = null
     private var currentReg: String = ""
     private var currentVehicle: VehicleData? = null
     private var currentMot: MotHistoryData? = null
@@ -54,6 +58,12 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.mainRoot)) { view, insets ->
+            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            view.setPadding(systemBars.left, 0, systemBars.right, systemBars.bottom)
+            insets
+        }
 
         markwon = Markwon.create(this)
 
@@ -360,7 +370,8 @@ class MainActivity : AppCompatActivity() {
             isEnabled = true
         }
 
-        lifecycleScope.launch {
+        searchJob?.cancel()
+        searchJob = lifecycleScope.launch {
             // Offline cache: show any previously saved result instantly, then refresh live.
             // A cached MOT that is a live-result with zero tests is a poisoned entry from an
             // earlier parser bug — ignore it so the charts don't render blank forever.
@@ -470,6 +481,9 @@ class MainActivity : AppCompatActivity() {
                 // Activity context so the fetcher can attach its WebView to this window
                 mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, currentReg)
             }
+
+            // Stale check: if user searched for another plate while this fetch was running, ignore result
+            if (currentReg != clean.uppercase()) return@launch
 
             val existingCache = db.cachedVehicleDao().get(currentReg)
 
@@ -686,20 +700,36 @@ class MainActivity : AppCompatActivity() {
     /** Re-runs only the MOT fetch for the plate currently on screen. */
     private fun retryMotFetch() {
         if (currentReg.isEmpty()) return
+        val targetReg = currentReg
         findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
         showMotSectionLoading()
         lifecycleScope.launch {
-            val mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, currentReg)
-            if (MotHistoryScraper.isUsable(mot)) {
+            var mot: MotHistoryData? = null
+            if (MotApiClient.isConfigured()) {
+                Log.d("MotFetch", "Retrying MOT history via official DVSA API for $targetReg")
+                mot = MotApiClient.fetchMotHistory(targetReg)
+                if (!MotHistoryScraper.isUsable(mot)) {
+                    Log.w("MotFetch", "API retry fetch unusable (${mot?.errorMessage}); falling back to WebView scraper")
+                }
+            } else {
+                Log.d("MotFetch", "API not configured. Retrying via WebView Scraper for $targetReg")
+            }
+            if (!MotHistoryScraper.isUsable(mot)) {
+                mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, targetReg)
+            }
+
+            if (currentReg != targetReg) return@launch
+
+            if (MotHistoryScraper.isUsable(mot) && mot != null) {
                 currentMot = mot
                 bindMotSection(mot)
-                val existingCache = db.cachedVehicleDao().get(currentReg)
+                val existingCache = db.cachedVehicleDao().get(targetReg)
                 val vehicle = currentVehicle ?: return@launch
                 db.cachedVehicleDao().upsert(
                     CachedVehicleEntity.fromData(vehicle, mot, existingCache?.aiReport)
                 )
             } else {
-                bindMotSection(mot ?: MotHistoryData(registration = currentReg, errorMessage = "Could not load MOT history — please try again."))
+                bindMotSection(mot ?: MotHistoryData(registration = targetReg, errorMessage = "Could not load MOT history — please try again."))
             }
         }
     }

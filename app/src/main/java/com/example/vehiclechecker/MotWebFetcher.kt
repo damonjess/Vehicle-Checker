@@ -259,6 +259,7 @@ object MotWebFetcher {
                 fun finishInternal(html: String?) {
                     if (finished) return
                     finished = true
+                    mainHandler.removeCallbacksAndMessages(null)
                     detach(webView)
                     try { webView?.stopLoading(); webView?.destroy() } catch (_: Exception) {}
                     webView = null

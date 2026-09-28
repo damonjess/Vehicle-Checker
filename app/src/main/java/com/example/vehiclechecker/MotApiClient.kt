@@ -10,7 +10,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.IOException
-import java.text.SimpleDateFormat
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -166,9 +165,9 @@ object MotApiClient {
                     val record = parseMotRecordResponse(responseData) ?: return@withContext null
                     return@withContext mapRecordToMotHistoryData(record, cleanReg)
                 }
-            } catch (e: SecurityException) {
+            } catch (_: SecurityException) {
                 return@withContext MotHistoryData(registration = cleanReg, errorMessage = "Check MOT API credentials")
-            } catch (e: IOException) {
+            } catch (_: IOException) {
                 return@withContext MotHistoryData(registration = cleanReg, errorMessage = "Network error fetching MOT history")
             } catch (e: Exception) {
                 Log.e("MotApiClient", "Error fetching MOT history from API: ${e.message}", e)
