@@ -76,13 +76,25 @@ class MileageBarChart @JvmOverloads constructor(
                 canvas.drawText(text, left + barWidth / 2f, top - 4f * density, valuePaint)
             }
 
-            // Year label below the bar
+            // Year label below the bar — smaller and de-overlapped when many years are shown
+            canvas.save()
+            val textWidth = axisPaint.measureText(entry.year.toString())
+            if (entries.size > 8 && textWidth > slot * 0.92f) {
+                axisPaint.textSize = 9f * density
+                axisPaint.typeface = Typeface.DEFAULT
+            }
+            val cx = left + barWidth / 2f
+            val drawWidth = axisPaint.measureText(entry.year.toString())
+            val clampedCx = cx.coerceIn(drawWidth / 2f, width - drawWidth / 2f)
             canvas.drawText(
                 entry.year.toString(),
-                left + barWidth / 2f,
+                clampedCx,
                 height - 5f * density,
                 axisPaint
             )
+            axisPaint.textSize = 11f * density
+            axisPaint.typeface = Typeface.DEFAULT_BOLD
+            canvas.restore()
         }
     }
 }

@@ -121,16 +121,44 @@ object ReportPdfBuilder {
                 checkNewPage(20f)
                 canvas.drawText("No MOT tests recorded.", margin, y, bodyPaint)
                 y += 16f
-            }
-            mot.tests.forEach { test ->
+            } else {
+                row("Pass rate", "${mot.passRatePercent}%")
+                row("Pass / Pass+advisory / Fail", "${mot.passCount} / ${mot.passWithAdvisoriesCount} / ${mot.failCount}")
+                mot.motValidUntil.takeIf { it.isNotBlank() }?.let { row("MOT valid until", it) }
+                mot.lastMileageMiles?.let {
+                    row("Last recorded mileage", String.format(Locale.UK, "%,d miles", it))
+                }
+                mot.averageMilesPerYear?.let {
+                    row("Average miles per year", String.format(Locale.UK, "%,d miles", it))
+                }
+                row("MOT gap years", "${mot.gapYears}")
+                val anomalies = mot.mileageAnomalies
+                if (anomalies.isEmpty()) {
+                    row("Mileage check", "No odometer anomalies detected")
+                } else {
+                    anomalies.forEach { anomaly ->
+                        checkNewPage(28f)
+                        canvas.drawText("⚠ ${anomaly.title}", margin, y, valuePaint)
+                        y += 14f
+                        canvas.drawText(anomaly.detail, margin + 12f, y, labelPaint)
+                        y += 14f
+                    }
+                }
+
                 checkNewPage(20f)
-                val line = "${test.dateTested} — ${test.result} — ${test.mileage.ifBlank { "mileage not recorded" }}"
-                canvas.drawText(line, margin, y, bodyPaint)
-                y += 14f
-                test.advisories.forEach { advisory ->
-                    checkNewPage(18f)
-                    canvas.drawText("   • $advisory", margin, y, labelPaint)
-                    y += 13f
+                y += 4f
+                canvas.drawText("Tests (newest first):", margin, y, headingPaint)
+                y += 17f
+                mot.tests.forEach { test ->
+                    checkNewPage(20f)
+                    val line = "${test.dateTested} — ${test.result} — ${test.mileage.ifBlank { "mileage not recorded" }}"
+                    canvas.drawText(line, margin, y, bodyPaint)
+                    y += 14f
+                    test.advisories.forEach { advisory ->
+                        checkNewPage(18f)
+                        canvas.drawText("   • $advisory", margin, y, labelPaint)
+                        y += 13f
+                    }
                 }
             }
         }

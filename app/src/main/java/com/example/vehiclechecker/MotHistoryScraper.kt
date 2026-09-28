@@ -44,17 +44,29 @@ object MotHistoryScraper {
             val fuelType = Regex("(?i)Fuel type\\s+([A-Za-z -]+?)\\s+Date registered")
                 .find(header)?.groupValues?.get(1)?.trim() ?: ""
 
-            // Header line "LC63 XRO TOYOTA RAV4" — plate + make/model
+            // Vehicle identity: the page renders the plate in a .dvsa-vrm div and the
+            // make/model in an h1.govuk-heading-xl (e.g. "TOYOTA RAV4"). Fall back to a
+            // plain-text scan of the header for older page variants.
             var reg = cleanReg
             var make = ""
             var model = ""
-            Regex("(?i)([A-Z]{1,3}[0-9]{1,4} ?[A-Z]{3})\\s+([A-Z][A-Za-z0-9 -]+)")
-                .find(header.replace("\n", " "))?.let { m ->
-                    reg = m.groupValues[1].replace(" ", "")
-                    val parts = m.groupValues[2].trim().split(" ", limit = 2)
-                    make = parts.getOrNull(0) ?: ""
-                    model = parts.getOrNull(1) ?: ""
-                }
+            doc.selectFirst(".dvsa-vrm")?.text()?.trim()?.let { vrm ->
+                if (vrm.isNotBlank()) reg = vrm.replace(" ", "").uppercase()
+            }
+            val headingText = doc.selectFirst("h1.govuk-heading-xl, h1")?.text()?.trim().orEmpty()
+            if (headingText.isNotBlank() && !headingText.contains(cleanReg, ignoreCase = true)) {
+                val parts = headingText.split(" ", limit = 2)
+                make = parts.getOrNull(0) ?: ""
+                model = parts.getOrNull(1) ?: ""
+            } else {
+                Regex("(?i)([A-Z]{1,3}[0-9]{1,4} ?[A-Z]{3})\\s+([A-Z][A-Za-z0-9 -]+)")
+                    .find(header.replace("\n", " "))?.let { m ->
+                        reg = m.groupValues[1].replace(" ", "")
+                        val parts = m.groupValues[2].trim().split(" ", limit = 2)
+                        make = parts.getOrNull(0) ?: ""
+                        model = parts.getOrNull(1) ?: ""
+                    }
+            }
 
             // Individual tests
             val tests = mutableListOf<MotTestRecord>()
@@ -93,7 +105,7 @@ object MotHistoryScraper {
                             !it.contains("Advisories are given", true)
                     }
 
-                if (dateTested.isNotBlank() || result.isNotBlank() || mileageText.isNotBlank()) {
+                if (dateTested.isNotBlank() && result.isNotBlank()) {
                     tests.add(
                         MotTestRecord(
                             dateTested = dateTested,
@@ -143,6 +155,16 @@ object MotHistoryScraper {
                 )
             }
 
+            // A results page that rendered but produced no usable rows must NOT be cached
+            // as a valid, empty history — that poisons the offline cache and blanks every
+            // chart on later launches. Surface it as an error instead.
+            if (tests.isEmpty()) {
+                return MotHistoryData(
+                    registration = cleanReg,
+                    errorMessage = "MOT history loaded but no test records were found for $cleanReg — please try again.",
+                )
+            }
+
             // Compute mileage difference vs the previous test (page lists newest first)
             val withDiffs = tests.mapIndexed { index, test ->
                 val prev = tests.getOrNull(index + 1)
@@ -172,6 +194,9 @@ object MotHistoryScraper {
             )
         }
     }
+
+    /** True when this is a live (non-error) result that carries no test rows — i.e. data we must not trust or cache. */
+    fun isUsable(mot: MotHistoryData?): Boolean = mot != null && mot.errorMessage == null && mot.tests.isNotEmpty()
 
     /** "51,801 miles" -> 51801 */
     private fun parseMileage(text: String): Int? =

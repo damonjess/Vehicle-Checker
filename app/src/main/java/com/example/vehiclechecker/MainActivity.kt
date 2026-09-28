@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import io.noties.markwon.Markwon
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -93,7 +94,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 db.vehicleDao().clearHistory()
                 recentSearchesContainer.removeAllViews()
-                db.cachedVehicleDao().purgeOlderThan(System.currentTimeMillis() + 60000)
+                db.cachedVehicleDao().purgeOlderThan(System.currentTimeMillis() - TimeUnit.DAYS.toMillis(30))
             }
         }
 
@@ -324,17 +325,24 @@ class MainActivity : AppCompatActivity() {
         }
 
         lifecycleScope.launch {
-            // Offline cache: show any previously saved result instantly, then refresh live
+            // Offline cache: show any previously saved result instantly, then refresh live.
+            // A cached MOT that is a live-result with zero tests is a poisoned entry from an
+            // earlier parser bug — ignore it so the charts don't render blank forever.
             val cached = db.cachedVehicleDao().get(clean.uppercase())
+            val cachedMotRaw = cached?.toMot()
+            val cachedMot = cachedMotRaw?.takeIf { MotHistoryScraper.isUsable(it) }
             if (cached != null) {
                 progressBar.visibility = View.GONE
                 val cachedVehicle = cached.toVehicle()
-                val cachedMot = cached.toMot()
                 currentReg = cachedVehicle.registration
                 currentVehicle = cachedVehicle
                 currentMot = cachedMot
                 bindResult(cachedVehicle)
-                cachedMot?.let { bindMotSection(it) }
+                if (cachedMot != null) {
+                    bindMotSection(cachedMot)
+                } else {
+                    findViewById<View>(R.id.cardMotHistory).visibility = View.GONE
+                }
                 resultsContainer.visibility = View.VISIBLE
                 loadNote(currentReg)
                 showFavouriteState(currentReg)
@@ -378,17 +386,16 @@ class MainActivity : AppCompatActivity() {
             val mot = MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
             val existingCache = db.cachedVehicleDao().get(currentReg)
 
-            if (mot.errorMessage == null) {
+            if (MotHistoryScraper.isUsable(mot)) {
                 currentMot = mot
                 bindMotSection(mot)
                 db.cachedVehicleDao().upsert(
                     CachedVehicleEntity.fromData(result, mot, existingCache?.aiReport)
                 )
             } else {
-                // Live fetch failed (usually bot protection) — fall back to the cached
-                // MOT instead of collapsing the card to an error message
-                val cachedMot = existingCache?.toMot()
-                val fallback = currentMot ?: cachedMot
+                // Live fetch failed (usually bot protection or a partial page) — fall back
+                // to any usable cached MOT instead of collapsing the card to an error.
+                val fallback = currentMot?.takeIf { MotHistoryScraper.isUsable(it) } ?: cachedMot
                 if (fallback != null) {
                     currentMot = fallback
                     bindMotSection(fallback)
@@ -702,8 +709,30 @@ class MainActivity : AppCompatActivity() {
         testsContainer.removeAllViews()
         val density = resources.displayMetrics.density
 
-        history.tests.take(10).forEachIndexed { index, test ->
+        // Every recorded test, grouped under its year heading so the history from
+        // different years is easy to scan.
+        var lastYearHeader: Int? = null
+        var isFirstYearHeader = true
+
+        history.tests.forEachIndexed { index, test ->
             val previousTest = history.tests.getOrNull(index + 1)
+
+            // Year group heading (e.g. "2026") before the first test of that year
+            val testYear = test.yearTested
+            if (testYear != null && testYear != lastYearHeader) {
+                lastYearHeader = testYear
+                val topPadding = if (isFirstYearHeader) 0 else (14 * density).toInt()
+                isFirstYearHeader = false
+                val yearHeader = TextView(this).apply {
+                    text = testYear.toString()
+                    textSize = 15f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+                    setPadding(0, topPadding, 0, 0)
+                }
+                testsContainer.addView(yearHeader)
+            }
+
             val row = layoutInflater.inflate(R.layout.view_mot_test_row, testsContainer, false)
             val bannerRoot = row.findViewById<View>(R.id.bannerRoot)
             val detailRoot = row.findViewById<View>(R.id.detailRoot)
@@ -824,11 +853,12 @@ class MainActivity : AppCompatActivity() {
         // Annual mileage bar chart (miles between consecutive tests, per year)
         val chart = findViewById<MileageBarChart>(R.id.mileageChart)
         val byYear = linkedMapOf<Int, Float>()
-        history.tests.forEach { test ->
-            val year = test.yearTested ?: return@forEach
-            val miles = test.mileageMiles?.toFloat() ?: return@forEach
-            val prev = history.tests.getOrNull(history.tests.indexOf(test) + 1)
-            val prevMiles = prev?.mileageMiles?.toFloat()
+        // tests are newest-first: the previous odometer reading is the NEXT entry.
+        // forEachIndexed (not indexOf) so duplicate test rows can't corrupt the pairing.
+        history.tests.forEachIndexed { index, test ->
+            val year = test.yearTested ?: return@forEachIndexed
+            val miles = test.mileageMiles?.toFloat() ?: return@forEachIndexed
+            val prevMiles = history.tests.getOrNull(index + 1)?.mileageMiles?.toFloat()
             val driven = if (prevMiles != null) (miles - prevMiles).coerceAtLeast(0f) else 0f
             byYear[year] = (byYear[year] ?: 0f) + driven
         }
