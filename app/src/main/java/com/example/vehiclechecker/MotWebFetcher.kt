@@ -24,13 +24,14 @@ object MotWebFetcher {
     private const val POLL_INTERVAL_MS = 1000L
     private const val MAX_POLLS = 25
 
-    // Returns READY when test records are on the page, EMPTY for "no MOT" pages,
+    // Returns READY when test records or MOT history content are on the page, EMPTY for "no MOT" pages,
     // CHALLENGE while bot protection is still running, WAITING otherwise.
     private const val STATUS_JS =
         "(function(){try{var t=document.body?document.body.innerText:'';" +
             "if(t.indexOf('Pardon Our Interruption')!==-1)return 'CHALLENGE';" +
-            "if(document.querySelectorAll('[data-test-id=test-history-item]').length>0)return 'READY';" +
-            "if(/no MOT/i.test(t)||/not found/i.test(t))return 'EMPTY';" +
+            "if(document.querySelectorAll('[data-test-id=test-history-item], [data-test-id=test-result], .mot-history-item, .govuk-accordion__section').length>0)return 'READY';" +
+            "if(/no MOT/i.test(t)||/not found/i.test(t)||/no test history/i.test(t))return 'EMPTY';" +
+            "if(document.querySelector('main')&&(t.indexOf('MOT history')!==-1||t.indexOf('Date tested')!==-1||t.indexOf('MOT valid until')!==-1))return 'READY';" +
             "return 'WAITING';}catch(e){return 'WAITING';}})()"
 
     class HtmlBridge(private val onHtmlReady: (String) -> Unit) {
@@ -83,7 +84,7 @@ object MotWebFetcher {
                         when (status) {
                             "READY", "EMPTY" -> view.evaluateJavascript(
                                 "window.AndroidBridge.processHTML(document.documentElement.outerHTML);",
-                                null
+                                null,
                             )
                             else -> mainHandler.postDelayed({ poll(view) }, POLL_INTERVAL_MS)
                         }
@@ -94,6 +95,8 @@ object MotWebFetcher {
                     webView = WebView(applicationContext).apply {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        settings.userAgentString =
+                            "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
                         addJavascriptInterface(HtmlBridge { html -> finish(html) }, "AndroidBridge")
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {

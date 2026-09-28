@@ -373,9 +373,18 @@ class MainActivity : AppCompatActivity() {
 
             // Fresh MOT history + cache the combined payload for offline use
             val mot = MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
-            currentMot = mot.takeIf { it.errorMessage == null }
-            currentMot?.let { bindMotSection(it) }
-            db.cachedVehicleDao().upsert(CachedVehicleEntity.fromData(result, currentMot))
+            if (mot.errorMessage == null) {
+                currentMot = mot
+                bindMotSection(mot)
+                db.cachedVehicleDao().upsert(CachedVehicleEntity.fromData(result, mot))
+            } else {
+                if (currentMot != null) {
+                    // Preserve valid cached MOT data if live fetch failed
+                    db.cachedVehicleDao().upsert(CachedVehicleEntity.fromData(result, currentMot))
+                } else {
+                    bindMotSection(mot)
+                }
+            }
         }
     }
 
