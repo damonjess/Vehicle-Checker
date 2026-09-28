@@ -50,7 +50,10 @@ class MainActivity : AppCompatActivity() {
             val plate = result.data?.getStringExtra(PlateScannerActivity.RESULT_PLATE)
             if (!plate.isNullOrBlank()) {
                 etPlate.setText(plate)
+                // A scan is usually about the MOT, so open its own screen straight away;
+                // the full report keeps loading behind it.
                 checkPlate(plate)
+                startActivity(MotHistoryActivity.intent(this, plate))
             }
         }
 
@@ -129,6 +132,9 @@ class MainActivity : AppCompatActivity() {
             } catch (_: Exception) {
             }
         }
+
+        // The report keeps only a compact MOT summary; the full record has its own screen.
+        findViewById<View>(R.id.btnOpenMotHistory).setOnClickListener { openMotHistory() }
 
         // Dev/debug hook: `adb shell am start -n com.example.vehiclechecker/.MainActivity --es plate ABC123`
         // runs a lookup immediately on launch.
@@ -399,9 +405,9 @@ class MainActivity : AppCompatActivity() {
                 currentMot = cachedMot
                 bindResult(cachedVehicle)
                 if (cachedMot != null) {
-                    bindMotSection(cachedMot)
+                    bindMotSummary(cachedMot)
                 } else {
-                    findViewById<View>(R.id.cardMotHistory).visibility = View.GONE
+                    findViewById<View>(R.id.cardMotSummary).visibility = View.GONE
                 }
                 resultsContainer.visibility = View.VISIBLE
                 loadNote(currentReg)
@@ -457,7 +463,7 @@ class MainActivity : AppCompatActivity() {
             // The MOT fetch (WebView challenge) can take 15-45s. Show the card right away
             // with a loading note so it's never silently absent — bindMotSection() swaps in
             // the real content (or a visible error reason) when the fetch settles.
-            if (currentMot == null) showMotSectionLoading()
+            if (currentMot == null) showMotSummaryLoading()
             
             // Only save to history if DVLA succeeded, to avoid cluttering recent searches with failed plates
             if (liveVehicle.errorMessage == null) {
@@ -468,23 +474,10 @@ class MainActivity : AppCompatActivity() {
             showFavouriteState(currentReg)
             loadServiceLogs()
 
-            // Fresh MOT history: official DVSA API first (only when fully configured),
-            // then the public GOV.UK WebView scraper, then the offline cache. A broken or
-            // rate-limited API must never leave the card empty while the scraper works.
-            var mot: MotHistoryData? = null
-            if (MotApiClient.isConfigured()) {
-                Log.d("MotFetch", "Fetching MOT history via official DVSA API for $currentReg")
-                mot = MotApiClient.fetchMotHistory(currentReg)
-                if (!isUsable(mot)) {
-                    Log.w("MotFetch", "API fetch unusable (${mot?.errorMessage}); falling back to WebView scraper")
-                }
-            } else {
-                Log.d("MotFetch", "API not configured. Using WebView Scraper for $currentReg")
-            }
-            if (!isUsable(mot)) {
-                // Activity context so the fetcher can attach its WebView to this window
-                mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, currentReg)
-            }
+            // Fresh MOT history: the official DVSA API when configured, then the public GOV.UK
+            // WebView scraper. Shared with the dedicated MOT screen, which may be asking for the
+            // same plate at the same moment, so the page is only ever rendered once.
+            val mot = MotHistoryRepository.load(this@MainActivity, currentReg)
 
             // Stale check: if user searched for another plate while this fetch was running, ignore result
             if (currentReg != clean.uppercase()) return@launch
@@ -493,7 +486,7 @@ class MainActivity : AppCompatActivity() {
 
             if (isUsable(mot) && mot != null) {
                 currentMot = mot
-                bindMotSection(mot)
+                bindMotSummary(mot)
                 db.cachedVehicleDao().upsert(
                     CachedVehicleEntity.fromData(liveVehicle, mot, existingCache?.aiReport)
                 )
@@ -503,14 +496,14 @@ class MainActivity : AppCompatActivity() {
                 val fallback = currentMot?.takeIf { isUsable(it) } ?: cachedMot
                 if (fallback != null) {
                     currentMot = fallback
-                    bindMotSection(fallback)
+                    bindMotSummary(fallback)
                     db.cachedVehicleDao().upsert(
                         CachedVehicleEntity.fromData(liveVehicle, fallback, existingCache?.aiReport)
                             .copy(timestamp = existingCache?.timestamp ?: System.currentTimeMillis())
                     )
                     Toast.makeText(this@MainActivity, "Showing saved MOT data (live fetch failed)", Toast.LENGTH_SHORT).show()
                 } else {
-                    bindMotSection(mot ?: MotHistoryData(registration = currentReg, errorMessage = "Could not load MOT history — please try again."))
+                    bindMotSummary(mot ?: MotHistoryData(registration = currentReg, errorMessage = "Could not load MOT history — please try again."))
                 }
             }
 
@@ -629,6 +622,9 @@ class MainActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.tvComplianceNote).text =
             "${taxEstimate.note}. ${ulez.detail} Rates are estimates — confirm on GOV.UK / TfL."
 
+        // Fuel + tax for a year; refined below once the MOT mileage arrives
+        updateRunningCost()
+
         // Outstanding Finance & Logbook Risk Check
         bindFinanceCheck(result)
 
@@ -689,16 +685,82 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Placeholder state for the MOT card while the live fetch is still running. */
-    private fun showMotSectionLoading() {
-        findViewById<View>(R.id.cardMotHistory).visibility = View.VISIBLE
-        findViewById<TextView>(R.id.tvMotHistorySummary).text = "Loading MOT history…"
+    /**
+     * Fuel plus road tax for a year. The annual mileage comes from the MOT odometer trail and the
+     * economy from the DVLA fuel type and engine size, so this is refined as soon as the MOT
+     * history lands (and runs again on the cached path, where it is already available).
+     */
+    private fun updateRunningCost() {
+        val vehicle = currentVehicle ?: return
+        val tax = TaxEstimator.estimate(
+            vehicle.firstRegistered, vehicle.yearOfManufacture, vehicle.engineSize,
+            vehicle.fuelType, vehicle.co2Emissions
+        ).amountPounds
+
+        val estimate = RunningCostCalculator.estimate(
+            fuelType = vehicle.fuelType,
+            engineSize = vehicle.engineSize,
+            motAnnualMiles = currentMot?.averageMilesPerYear,
+            taxPerYear = tax
+        )
+
+        findViewById<TextView>(R.id.tvFuelCost).text = "£${estimate.fuelCostPerYear} / year"
+        findViewById<TextView>(R.id.tvRunningTotal).text = "£${estimate.totalPerYear} / year"
+        findViewById<TextView>(R.id.tvRunningCostNote).text = estimate.assumption
+    }
+
+    /**
+     * Compact MOT summary shown in the report. The full record — charts, every test, the mileage
+     * trail and recalls — lives on its own screen ([MotHistoryActivity]).
+     */
+    private fun bindMotSummary(history: MotHistoryData) {
+        val cardMotSummary = findViewById<View>(R.id.cardMotSummary)
+        val tvLine = findViewById<TextView>(R.id.tvMotSummaryLine)
+        val tvStats = findViewById<TextView>(R.id.tvMotSummaryStats)
+
+        if (history.tests.isEmpty()) {
+            if (history.errorMessage != null) {
+                // Show the reason so failures are visible, not silent
+                tvLine.text = history.errorMessage
+                tvStats.visibility = View.GONE
+                findViewById<View>(R.id.btnOpenMotHistory).visibility = View.GONE
+                findViewById<View>(R.id.btnRetryMot).visibility = View.VISIBLE
+                findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.VISIBLE
+                cardMotSummary.visibility = View.VISIBLE
+            } else {
+                cardMotSummary.visibility = View.GONE
+            }
+            return
+        }
+
         findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
         findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.GONE
-        findViewById<View>(R.id.insightsPanel).visibility = View.GONE
-        findViewById<View>(R.id.motTestsContainer).visibility = View.GONE
-        findViewById<View>(R.id.mileageSection).visibility = View.GONE
-        findViewById<View>(R.id.cardRecalls).visibility = View.GONE
+        findViewById<View>(R.id.btnOpenMotHistory).visibility = View.VISIBLE
+
+        tvLine.text = history.summaryLine()
+        tvStats.text = history.overviewLine()
+        tvStats.visibility = View.VISIBLE
+        cardMotSummary.visibility = View.VISIBLE
+
+        // The MOT trail supplies the annual mileage the running-cost estimate needs
+        updateRunningCost()
+    }
+
+    /** Placeholder state for the compact MOT summary while the live fetch is still running. */
+    private fun showMotSummaryLoading() {
+        findViewById<View>(R.id.cardMotSummary).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tvMotSummaryLine).text = "Loading MOT history…"
+        findViewById<View>(R.id.tvMotSummaryStats).visibility = View.GONE
+        findViewById<View>(R.id.btnOpenMotHistory).visibility = View.GONE
+        findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
+        findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.GONE
+    }
+
+    /** Opens the dedicated MOT history screen for whatever plate is on screen. */
+    private fun openMotHistory() {
+        val plate = currentReg.ifBlank { etPlate.text.toString() }
+        if (plate.isBlank()) return
+        startActivity(MotHistoryActivity.intent(this, plate))
     }
 
     /** Re-runs only the MOT fetch for the plate currently on screen. */
@@ -706,356 +768,23 @@ class MainActivity : AppCompatActivity() {
         if (currentReg.isEmpty()) return
         val targetReg = currentReg
         findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
-        showMotSectionLoading()
+        showMotSummaryLoading()
         lifecycleScope.launch {
-            var mot: MotHistoryData? = null
-            if (MotApiClient.isConfigured()) {
-                Log.d("MotFetch", "Retrying MOT history via official DVSA API for $targetReg")
-                mot = MotApiClient.fetchMotHistory(targetReg)
-                if (!MotHistoryScraper.isUsable(mot)) {
-                    Log.w("MotFetch", "API retry fetch unusable (${mot?.errorMessage}); falling back to WebView scraper")
-                }
-            } else {
-                Log.d("MotFetch", "API not configured. Retrying via WebView Scraper for $targetReg")
-            }
-            if (!MotHistoryScraper.isUsable(mot)) {
-                mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, targetReg)
-            }
+            val mot = MotHistoryRepository.load(this@MainActivity, targetReg)
 
             if (currentReg != targetReg) return@launch
 
             if (MotHistoryScraper.isUsable(mot) && mot != null) {
                 currentMot = mot
-                bindMotSection(mot)
+                bindMotSummary(mot)
                 val existingCache = db.cachedVehicleDao().get(targetReg)
                 val vehicle = currentVehicle ?: return@launch
                 db.cachedVehicleDao().upsert(
                     CachedVehicleEntity.fromData(vehicle, mot, existingCache?.aiReport)
                 )
             } else {
-                bindMotSection(mot ?: MotHistoryData(registration = targetReg, errorMessage = "Could not load MOT history — please try again."))
+                bindMotSummary(mot ?: MotHistoryData(registration = targetReg, errorMessage = "Could not load MOT history — please try again."))
             }
-        }
-    }
-
-    private fun bindMotSection(history: MotHistoryData) {
-        val cardMotHistory = findViewById<View>(R.id.cardMotHistory)
-        val tvSummary = findViewById<TextView>(R.id.tvMotHistorySummary)
-
-        if (history.tests.isEmpty()) {
-            if (history.errorMessage != null) {
-                // Show the card with the reason so failures are visible, not silent
-                tvSummary.text = history.errorMessage
-                findViewById<View>(R.id.insightsPanel).visibility = View.GONE
-                findViewById<View>(R.id.motTestsContainer).visibility = View.GONE
-                findViewById<View>(R.id.mileageSection).visibility = View.GONE
-                findViewById<View>(R.id.cardRecalls).visibility = View.GONE
-                findViewById<View>(R.id.btnRetryMot).visibility = View.VISIBLE
-                findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.VISIBLE
-                cardMotHistory.visibility = View.VISIBLE
-            } else {
-                cardMotHistory.visibility = View.GONE
-            }
-            return
-        }
-
-        findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
-        findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.GONE
-
-        tvSummary.text = buildString {
-            append(history.make)
-            if (history.model.isNotBlank()) append(" ${history.model}")
-            append(" · ${history.tests.size} test")
-            if (history.tests.size != 1) append("s")
-            if (history.motValidUntil.isNotBlank()) append(" · valid until ${history.motValidUntil}")
-        }
-
-        findViewById<View>(R.id.insightsPanel).visibility = View.VISIBLE
-        findViewById<View>(R.id.motTestsContainer).visibility = View.VISIBLE
-        findViewById<View>(R.id.mileageSection).visibility = View.VISIBLE
-
-        bindMotInsights(history)
-        bindMotTests(history)
-        bindMileageTable(history)
-        bindRecalls(history)
-
-        cardMotHistory.visibility = View.VISIBLE
-    }
-
-    private fun bindRecalls(history: MotHistoryData) {
-        val cardRecalls = findViewById<View>(R.id.cardRecalls)
-        val tvTitle = findViewById<TextView>(R.id.tvRecallTitle)
-        val tvDetail = findViewById<TextView>(R.id.tvRecallDetail)
-
-        cardRecalls.visibility = View.VISIBLE
-        when (history.recallStatus) {
-            RecallStatus.NONE -> {
-                tvTitle.text = "✓ Safety Recalls: none outstanding"
-                tvTitle.setTextColor(ContextCompat.getColor(this, R.color.status_success))
-                tvDetail.text = history.recallDetail.ifBlank {
-                    "No outstanding safety recalls recorded for this vehicle."
-                }
-            }
-            RecallStatus.OUTSTANDING -> {
-                tvTitle.text = "⚠ Outstanding safety recall"
-                tvTitle.setTextColor(ContextCompat.getColor(this, R.color.status_danger))
-                tvDetail.text = history.recallDetail.ifBlank {
-                    "This vehicle has an unfixed safety recall. Contact a dealer to arrange the free repair."
-                }
-            }
-            RecallStatus.UNKNOWN -> {
-                tvTitle.text = "Safety Recalls"
-                tvTitle.setTextColor(ContextCompat.getColor(this, R.color.text_primary))
-                tvDetail.text = history.recallDetail.ifBlank {
-                    "Recall information is not available for this vehicle. Check with the manufacturer."
-                }
-            }
-        }
-    }
-
-    private fun bindMotInsights(history: MotHistoryData) {
-        findViewById<TextView>(R.id.tvGapYears).text = history.gapYears.toString()
-
-        val passRateTv = findViewById<TextView>(R.id.tvPassRate)
-
-        val trendText = when (history.conditionTrend) {
-            ConditionTrend.IMPROVING -> "  📈 Improving"
-            ConditionTrend.DEGRADING -> "  📉 Degrading"
-            ConditionTrend.STABLE -> "  ➖ Stable"
-            ConditionTrend.INSUFFICIENT_DATA -> ""
-        }
-
-        passRateTv.text = "${history.passRatePercent}%$trendText"
-
-        // Optional: Color the trend text
-        when (history.conditionTrend) {
-            ConditionTrend.IMPROVING -> passRateTv.setTextColor(ContextCompat.getColor(this, R.color.status_success))
-            ConditionTrend.DEGRADING -> passRateTv.setTextColor(ContextCompat.getColor(this, R.color.status_danger))
-            else -> passRateTv.setTextColor(ContextCompat.getColor(this, R.color.white))
-        }
-
-        // Pass / Pass+Advise / Fail stat rows with colored dots
-        val statsContainer = findViewById<LinearLayout>(R.id.passStatsContainer)
-        statsContainer.removeAllViews()
-        val stats = listOf(
-            Triple("Pass", history.passCount, R.color.status_success),
-            Triple("Pass + Advise", history.passWithAdvisoriesCount, R.color.status_warn),
-            Triple("Fail", history.failCount, R.color.status_danger)
-        )
-        stats.forEach { (label, value, colorRes) ->
-            val row = layoutInflater.inflate(R.layout.view_stat_row, statsContainer, false)
-            row.findViewById<View>(R.id.dotStat)
-                .setBackgroundColor(ContextCompat.getColor(this, colorRes))
-            row.findViewById<TextView>(R.id.tvStatLabel).text = label
-            row.findViewById<TextView>(R.id.tvStatValue).text = value.toString()
-            statsContainer.addView(row)
-        }
-
-        val pie = findViewById<MotPieChart>(R.id.pieChart)
-        pie.setSlices(
-            listOf(
-                MotPieChart.Slice(
-                    ContextCompat.getColor(this, R.color.status_success),
-                    history.passCount.toFloat(), "Pass"
-                ),
-                MotPieChart.Slice(
-                    ContextCompat.getColor(this, R.color.status_warn),
-                    history.passWithAdvisoriesCount.toFloat(), "Pass + Advise"
-                ),
-                MotPieChart.Slice(
-                    ContextCompat.getColor(this, R.color.status_danger),
-                    history.failCount.toFloat(), "Fail"
-                )
-            )
-        )
-    }
-
-    private fun bindMotTests(history: MotHistoryData) {
-        val testsContainer = findViewById<LinearLayout>(R.id.motTestsContainer)
-        testsContainer.removeAllViews()
-        val density = resources.displayMetrics.density
-
-        // Every recorded test, grouped under its year heading so the history from
-        // different years is easy to scan.
-        var lastYearHeader: Int? = null
-        var isFirstYearHeader = true
-
-        history.tests.forEachIndexed { index, test ->
-            val previousTest = history.tests.getOrNull(index + 1)
-
-            // Year group heading (e.g. "2026") before the first test of that year
-            val testYear = test.yearTested
-            if (testYear != null && testYear != lastYearHeader) {
-                lastYearHeader = testYear
-                val topPadding = if (isFirstYearHeader) 0 else (14 * density).toInt()
-                isFirstYearHeader = false
-                val yearHeader = TextView(this).apply {
-                    text = testYear.toString()
-                    textSize = 15f
-                    setTypeface(null, Typeface.BOLD)
-                    setTextColor(ContextCompat.getColor(context, R.color.text_primary))
-                    setPadding(0, topPadding, 0, 0)
-                }
-                testsContainer.addView(yearHeader)
-            }
-
-            val row = layoutInflater.inflate(R.layout.view_mot_test_row, testsContainer, false)
-            val bannerRoot = row.findViewById<View>(R.id.bannerRoot)
-            val detailRoot = row.findViewById<View>(R.id.detailRoot)
-            val tvResult = row.findViewById<TextView>(R.id.tvTestResult)
-
-            val color = ContextCompat.getColor(
-                this,
-                if (test.isPass) R.color.status_success else R.color.status_danger
-            )
-            bannerRoot.background?.setTint(color)
-            tvResult.text = if (test.isPass) "Pass" else "Fail"
-
-            row.findViewById<TextView>(R.id.tvTestDate).text = test.dateTested
-
-            // Detail lines
-            bindDetailLine(row, R.id.detailDate, "Date of Test:", test.dateTested)
-            bindDetailLine(row, R.id.detailExpiry, "Expiry Date:", test.expiryDate.ifBlank { "Not recorded" })
-            bindDetailLine(row, R.id.detailOdometer, "Odometer:", test.mileage.ifBlank { "Not recorded" })
-            bindDetailLine(row, R.id.detailDifference, "Difference:", test.mileageDifferenceText ?: "First record")
-            bindDetailLine(row, R.id.detailTestNumber, "Test Number:", test.testNumber.ifBlank { "Not recorded" })
-
-            // Advisories
-            val advisoriesSection = row.findViewById<View>(R.id.advisoriesSection)
-            val advisoriesContainer = row.findViewById<LinearLayout>(R.id.advisoriesContainer)
-
-            if (test.advisories.isEmpty()) {
-                advisoriesSection.visibility = View.GONE
-            } else {
-                advisoriesSection.visibility = View.VISIBLE
-                advisoriesContainer.removeAllViews()
-
-                test.advisories.forEach { advisory ->
-                    // 1. Print the standard advisory
-                    val tv = TextView(this).apply {
-                        text = "• $advisory"
-                        textSize = 13f
-                        setTextColor(ContextCompat.getColor(context, R.color.text_primary))
-                    }
-                    advisoriesContainer.addView(tv)
-
-                    // 2. The String Matching Script
-                    val normalize = { s: String -> s.lowercase().replace(Regex("[^a-z0-9]"), "") }
-                    val currentNorm = normalize(advisory)
-
-                    val isIgnored = previousTest?.advisories?.any { pastAdv ->
-                        val pastNorm = normalize(pastAdv)
-                        currentNorm.isNotEmpty() && (currentNorm.contains(pastNorm) || pastNorm.contains(currentNorm))
-                    } == true
-
-                    // 3. Inject the warning UI if a match is found
-                    if (isIgnored) {
-                        val pastYear = previousTest.yearTested ?: "a previous test"
-                        val warningTv = TextView(this).apply {
-                            text = "⚠️ Repeated Advisory: This issue was also flagged in $pastYear and has been left unrepaired."
-                            textSize = 12f
-                            setPadding(30, 4, 0, 12)
-                            // Using status_warn (Orange) so it is readable on both Light and Dark backgrounds
-                            setTextColor(ContextCompat.getColor(context, R.color.status_warn))
-                            setTypeface(null, Typeface.BOLD_ITALIC)
-                        }
-                        advisoriesContainer.addView(warningTv)
-                    }
-                }
-            }
-
-            // Expand/collapse on banner tap
-            bannerRoot.setOnClickListener {
-                val expanded = detailRoot.visibility == View.VISIBLE
-                detailRoot.visibility = if (expanded) View.GONE else View.VISIBLE
-                row.findViewById<TextView>(R.id.tvChevron).text = if (expanded) "›" else "⌄"
-            }
-
-            testsContainer.addView(
-                row,
-                LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT,
-                    LinearLayout.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = (10 * density).toInt() }
-            )
-        }
-    }
-
-    private fun bindDetailLine(row: View, lineId: Int, label: String, value: String) {
-        row.findViewById<View>(lineId)?.let { line ->
-            line.findViewById<TextView>(R.id.tvLineLabel).text = label
-            line.findViewById<TextView>(R.id.tvLineValue).text = value
-        }
-    }
-
-    private fun bindMileageTable(history: MotHistoryData) {
-        // Mileage anomaly warnings (possible clocking) — or a clean bill of health
-        val anomaliesContainer = findViewById<LinearLayout>(R.id.anomaliesContainer)
-        anomaliesContainer.removeAllViews()
-        val anomalies = history.mileageAnomalies
-        if (anomalies.isEmpty()) {
-            if (history.tests.count { it.mileageMiles != null } >= 2) {
-                val okRow = layoutInflater.inflate(R.layout.view_mileage_anomaly, anomaliesContainer, false)
-                okRow.background?.setTint(ContextCompat.getColor(this, R.color.status_success))
-                okRow.findViewById<TextView>(R.id.tvAnomalyTitle).apply {
-                    text = "✓ No mileage issues spotted"
-                    setTextColor(ContextCompat.getColor(this@MainActivity, R.color.white))
-                }
-                okRow.findViewById<TextView>(R.id.tvAnomalyDetail).apply {
-                    text = "Odometer readings increase consistently across every recorded test."
-                    setTextColor(0xE6FFFFFF.toInt())
-                }
-                anomaliesContainer.addView(okRow)
-            }
-        } else {
-            anomalies.forEach { anomaly ->
-                val row = layoutInflater.inflate(R.layout.view_mileage_anomaly, anomaliesContainer, false)
-                row.findViewById<TextView>(R.id.tvAnomalyTitle).text = "⚠ ${anomaly.title}"
-                row.findViewById<TextView>(R.id.tvAnomalyDetail).text = anomaly.detail
-                anomaliesContainer.addView(row)
-            }
-        }
-
-        // Annual mileage bar chart (miles between consecutive tests, per year)
-        val chart = findViewById<MileageBarChart>(R.id.mileageChart)
-        val byYear = linkedMapOf<Int, Float>()
-        // tests are newest-first: the previous odometer reading is the NEXT entry.
-        // forEachIndexed (not indexOf) so duplicate test rows can't corrupt the pairing.
-        history.tests.forEachIndexed { index, test ->
-            val year = test.yearTested ?: return@forEachIndexed
-            val miles = test.mileageMiles?.toFloat() ?: return@forEachIndexed
-            val prevMiles = history.tests.getOrNull(index + 1)?.mileageMiles?.toFloat()
-            val driven = if (prevMiles != null) (miles - prevMiles).coerceAtLeast(0f) else 0f
-            byYear[year] = (byYear[year] ?: 0f) + driven
-        }
-        chart.setEntries(byYear.entries.map { MileageBarChart.Entry(it.key, it.value) }.reversed())
-
-        val rowsContainer = findViewById<LinearLayout>(R.id.mileageRowsContainer)
-        rowsContainer.removeAllViews()
-
-        val lastMileage = history.lastMileageMiles
-        findViewById<TextView>(R.id.tvLastMileage).text =
-            lastMileage?.let { String.format(java.util.Locale.UK, "%,d miles", it) } ?: "Not recorded"
-        findViewById<TextView>(R.id.tvAvgMileage).text =
-            history.averageMilesPerYear?.let { String.format(java.util.Locale.UK, "%,d miles", it) }
-                ?: "Not recorded"
-
-        history.tests.forEach { test ->
-            if (test.mileageMiles == null) return@forEach
-            val row = layoutInflater.inflate(R.layout.view_mileage_row, rowsContainer, false)
-            row.findViewById<TextView>(R.id.tvMileageDate).text = test.dateTested
-            row.findViewById<TextView>(R.id.tvMileageOdometer).text = test.mileage
-
-            val tvDiff = row.findViewById<TextView>(R.id.tvMileageDiff)
-            tvDiff.text = test.mileageDifferenceText ?: "--"
-            tvDiff.setTextColor(
-                when {
-                    test.mileageDifference == null -> 0xFFB0BEC5.toInt()
-                    test.mileageDifference!! < 0 -> 0xFFFF5252.toInt()
-                    else -> 0xFF69F0AE.toInt()
-                }
-            )
-            rowsContainer.addView(row)
         }
     }
 

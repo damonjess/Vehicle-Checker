@@ -2,6 +2,8 @@ package com.example.vehiclechecker
 
 import androidx.annotation.Keep
 import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToLong
@@ -25,6 +27,97 @@ data class MotHistoryData(
     val failCount: Int get() = tests.count { !it.isPass }
     val passRatePercent: Int
         get() = if (tests.isEmpty()) 0 else ((passCount + passWithAdvisoriesCount) * 100.0 / tests.size).roundToLong().toInt()
+
+    /** Total individual defects recorded across every failed test. */
+    val totalFailureCount: Int get() = tests.sumOf { it.failures.size }
+
+    /** Total advisories recorded across every test. */
+    val totalAdvisoryCount: Int get() = tests.sumOf { it.advisories.size }
+
+    /** Oldest test on record — how far back the MOT trail actually goes. */
+    val firstTestDate: String? get() = tests.lastOrNull()?.dateTested?.takeIf { it.isNotBlank() }
+
+    /** The recorded MOT expiry as a date, or null when the page carried no usable date. */
+    val motExpiryDate: Date? get() = parseUkDate(motValidUntil)
+
+    /**
+     * Whole days until the MOT runs out (negative once it has). [now] is injectable so the
+     * countdown can be tested without depending on the wall clock.
+     */
+    fun daysUntilMotExpiry(now: Long = System.currentTimeMillis()): Int? {
+        val expiry = motExpiryDate ?: return null
+        val calendar = Calendar.getInstance()
+        fun startOfDay(millis: Long): Long {
+            calendar.timeInMillis = millis
+            calendar.set(Calendar.HOUR_OF_DAY, 0)
+            calendar.set(Calendar.MINUTE, 0)
+            calendar.set(Calendar.SECOND, 0)
+            calendar.set(Calendar.MILLISECOND, 0)
+            return calendar.timeInMillis
+        }
+        return ((startOfDay(expiry.time) - startOfDay(now)) / MILLIS_PER_DAY).toInt()
+    }
+
+    /** One-line identity: make/model, how many tests and when the MOT runs out. */
+    fun summaryLine(now: Long = System.currentTimeMillis()): String = buildString {
+        append(listOf(make, model).filter { it.isNotBlank() }.joinToString(" ").ifBlank { "MOT history" })
+        append(" · ${tests.size} test")
+        if (tests.size != 1) append("s")
+        if (motValidUntil.isNotBlank()) {
+            append(" · valid until $motValidUntil")
+            daysUntilMotExpiry(now)?.let { days ->
+                append(
+                    when {
+                        days < 0 -> " (expired)"
+                        days == 0 -> " (expires today)"
+                        else -> " (in $days days)"
+                    }
+                )
+            }
+        }
+    }
+
+    /** Pass rate and the pass/advise/fail split, for the compact summary on the report. */
+    fun overviewLine(): String {
+        val parts = mutableListOf("Pass rate $passRatePercent%")
+        parts += "$passCount clean pass" + if (passCount == 1) "" else "es"
+        if (passWithAdvisoriesCount > 0) parts += "$passWithAdvisoriesCount with advisories"
+        parts += "$failCount fail" + if (failCount == 1) "" else "s"
+        lastMileageMiles?.let { parts += "Last mileage ${String.format(Locale.UK, "%,d", it)} miles" }
+        return parts.joinToString(" · ")
+    }
+
+    /**
+     * Advisories and defects flagged on more than one test — the faults that keep coming back
+     * and are the ones a buyer most needs to know about.
+     */
+    val recurringIssues: List<RecurringIssue>
+        get() {
+            val buckets = LinkedHashMap<String, RecurringIssueBuilder>()
+            // Walk oldest-first so the wording kept is the earliest one recorded.
+            tests.asReversed().forEach { test ->
+                val year = test.yearTested
+                fun record(items: List<String>, isFailure: Boolean) {
+                    for (raw in items) {
+                        val text = raw.trim()
+                        val key = normaliseIssueText(text)
+                        if (key.isEmpty()) continue
+                        val bucket = buckets.getOrPut(key) { RecurringIssueBuilder(text, isFailure) }
+                        bucket.occurrences++
+                        if (year != null) bucket.years.add(year)
+                    }
+                }
+                record(test.failures, true)
+                record(test.advisories, false)
+            }
+            return buckets.values
+                .filter { it.occurrences > 1 }
+                .sortedWith(
+                    compareByDescending<RecurringIssueBuilder> { it.occurrences }
+                        .thenByDescending { it.years.maxOrNull() ?: 0 }
+                )
+                .map { RecurringIssue(it.text, it.occurrences, it.years.sortedDescending(), it.isFailure) }
+        }
 
     /** Tests in consecutive years with no test recorded in between (a sign the vehicle was off the road). */
     val gapYears: Int
@@ -163,7 +256,57 @@ data class MotHistoryData(
                 else -> ConditionTrend.STABLE
             }
         }
+
+    companion object {
+        private const val MILLIS_PER_DAY = 86_400_000L
+
+        /** "13 February 2027" -> Date, tolerant of the abbreviated month form too. */
+        internal fun parseUkDate(text: String): Date? {
+            val clean = text.trim()
+            if (clean.isEmpty()) return null
+            for (pattern in arrayOf("d MMMM yyyy", "d MMM yyyy")) {
+                try {
+                    return SimpleDateFormat(pattern, Locale.UK).apply { isLenient = true }.parse(clean)
+                } catch (_: Exception) {
+                    // Try the next pattern.
+                }
+            }
+            return null
+        }
+
+        /**
+         * Folds wording differences so the same fault recorded in different years still groups.
+         * Case, punctuation, figures (mileage) and parenthesised regulation references such as
+         * "(5.2.3 (e))" are all dropped, since only the defect description itself is stable.
+         */
+        internal fun normaliseIssueText(text: String): String {
+            var clean = text.lowercase(Locale.UK)
+            // Unwrap nested brackets innermost-first, e.g. "(5.2.3 (e))" -> " ".
+            while (true) {
+                val next = clean.replace(Regex("\\([^()]*\\)"), " ")
+                if (next == clean) break
+                clean = next
+            }
+            return clean.filter { it.isLetter() }
+        }
+    }
 }
+
+/** Mutable accumulator used while grouping [MotHistoryData.recurringIssues]. */
+private class RecurringIssueBuilder(val text: String, val isFailure: Boolean) {
+    var occurrences = 0
+    val years = sortedSetOf<Int>()
+}
+
+/** A defect or advisory recorded on more than one MOT test. */
+@Keep
+data class RecurringIssue(
+    val text: String,
+    val occurrences: Int,
+    /** Years in which it was flagged, newest first. */
+    val years: List<Int>,
+    val isFailure: Boolean
+)
 
 @Keep
 data class MotTestRecord(

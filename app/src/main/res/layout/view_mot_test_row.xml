@@ -4,53 +4,71 @@
     android:layout_height="wrap_content"
     android:orientation="vertical">
 
-    <!-- Collapsed banner: colored result pill with test date -->
+    <!-- Collapsed banner: colored result pill with test date and an at-a-glance meta line -->
     <LinearLayout
         android:id="@+id/bannerRoot"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="wrap_content"
         android:background="@drawable/bg_test_banner"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
+        android:orientation="vertical"
         android:paddingStart="16dp"
-        android:paddingEnd="16dp">
+        android:paddingTop="10dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="10dp">
 
-        <TextView
-            android:id="@+id/tvTestResult"
-            android:layout_width="wrap_content"
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="PASS"
-            android:textColor="@color/white"
-            android:textSize="17sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="10dp"
-            android:text="Test Date:"
-            android:textColor="#E6FFFFFF"
-            android:textSize="15sp" />
+            <TextView
+                android:id="@+id/tvTestResult"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PASS"
+                android:textColor="@color/white"
+                android:textSize="17sp"
+                android:textStyle="bold" />
 
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="Test Date:"
+                android:textColor="#E6FFFFFF"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/tvTestDate"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="--"
+                android:textColor="@color/white"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvChevron"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="›"
+                android:textColor="@color/white"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Odometer, defect and advisory counts, so each collapsed row is informative -->
         <TextView
-            android:id="@+id/tvTestDate"
-            android:layout_width="0dp"
+            android:id="@+id/tvTestMeta"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
-            android:layout_weight="1"
+            android:layout_marginTop="2dp"
             android:text="--"
-            android:textColor="@color/white"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/tvChevron"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="›"
-            android:textColor="@color/white"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+            android:textColor="#CCFFFFFF"
+            android:textSize="12sp" />
     </LinearLayout>
 
     <!-- Expanded detail card -->
@@ -97,6 +115,37 @@
             <include
                 android:id="@+id/detailTestNumber"
                 layout="@layout/view_mot_detail_line" />
+
+            <!-- Why a failed test failed — parsed from the page and never hidden -->
+            <LinearLayout
+                android:id="@+id/failuresSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <View style="@style/DetailDivider" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingStart="14dp"
+                    android:paddingTop="10dp"
+                    android:paddingEnd="14dp"
+                    android:text="Reasons for failure:"
+                    android:textColor="@color/status_danger"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:id="@+id/failuresContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingStart="14dp"
+                    android:paddingBottom="10dp"
+                    android:paddingEnd="14dp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/advisoriesSection"

@@ -375,9 +375,13 @@
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
-                <!-- MOT history (from the free public GOV.UK MOT service) -->
+
+                <!--
+                    Compact MOT summary. The full MOT record (charts, every test, mileage trail and
+                    recalls) has its own screen so the report stays scannable.
+                -->
                 <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardMotHistory"
+                    android:id="@+id/cardMotSummary"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
@@ -394,28 +398,49 @@
                         android:orientation="vertical"
                         android:padding="16dp">
 
-                        <TextView
+                        <LinearLayout
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:gravity="center"
-                            android:text="MOT History"
-                            android:textColor="@color/text_primary"
-                            android:textSize="20sp"
-                            android:textStyle="bold" />
+                            android:gravity="center_vertical"
+                            android:orientation="horizontal">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="MOT History"
+                                android:textColor="@color/text_primary"
+                                android:textSize="17sp"
+                                android:textStyle="bold" />
+
+                            <Button
+                                android:id="@+id/btnOpenMotHistory"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="View report"
+                                android:visibility="gone" />
+                        </LinearLayout>
 
                         <TextView
-                            android:id="@+id/tvMotHistorySummary"
+                            android:id="@+id/tvMotSummaryLine"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="2dp"
-                            android:gravity="center"
+                            android:layout_marginTop="6dp"
                             android:textColor="@color/text_secondary"
                             android:textSize="13sp" />
+
+                        <TextView
+                            android:id="@+id/tvMotSummaryStats"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="4dp"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="12sp"
+                            android:visibility="gone" />
 
                         <LinearLayout
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_gravity="center_horizontal"
                             android:layout_marginTop="8dp"
                             android:orientation="horizontal">
 
@@ -433,237 +458,6 @@
                                 android:layout_marginStart="8dp"
                                 android:text="Open in browser"
                                 android:visibility="gone" />
-                        </LinearLayout>
-
-                        <!-- Dark MOT insights panel: gap years, pass rate, pie chart -->
-                        <LinearLayout
-                            android:id="@+id/insightsPanel"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="12dp"
-                            android:background="@drawable/bg_insights_panel"
-                            android:orientation="vertical"
-                            android:padding="16dp">
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:orientation="horizontal">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="MOT Gap Years:"
-                                    android:textColor="@color/white"
-                                    android:textSize="14sp" />
-
-                                <TextView
-                                    android:id="@+id/tvGapYears"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="0"
-                                    android:textColor="@color/white"
-                                    android:textSize="15sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:orientation="horizontal">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="MOT Pass Rate:"
-                                    android:textColor="@color/white"
-                                    android:textSize="14sp" />
-
-                                <TextView
-                                    android:id="@+id/tvPassRate"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="0 %"
-                                    android:textColor="@color/white"
-                                    android:textSize="15sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <LinearLayout
-                                android:id="@+id/passStatsContainer"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:layout_marginStart="16dp"
-                                android:orientation="vertical" />
-
-                            <com.example.vehiclechecker.MotPieChart
-                                android:id="@+id/pieChart"
-                                android:layout_width="180dp"
-                                android:layout_height="180dp"
-                                android:layout_gravity="center_horizontal"
-                                android:layout_marginTop="12dp" />
-                        </LinearLayout>
-
-                        <!-- Expandable test banners -->
-                        <LinearLayout
-                            android:id="@+id/motTestsContainer"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="14dp"
-                            android:orientation="vertical" />
-
-                        <!-- Mileage data section -->
-                        <LinearLayout
-                            android:id="@+id/mileageSection"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="14dp"
-                            android:background="@drawable/bg_insights_panel"
-                            android:orientation="vertical"
-                            android:padding="16dp">                                <TextView
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:gravity="center"
-                                    android:text="Mileage Data"
-                                    android:textColor="@color/white"
-                                    android:textSize="18sp"
-                                    android:textStyle="bold" />
-
-                            <!-- Mileage anomaly warnings (possible clocking) -->
-                            <LinearLayout
-                                android:id="@+id/anomaliesContainer"
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:orientation="vertical" />
-
-                                <LinearLayout
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="12dp"
-                                    android:background="@drawable/bg_stat_box"
-                                    android:orientation="horizontal"
-                                    android:padding="14dp">
-
-                                    <TextView
-                                        android:layout_width="0dp"
-                                        android:layout_height="wrap_content"
-                                        android:layout_weight="1"
-                                        android:text="Last MOT mileage:"
-                                        android:textColor="@color/white"
-                                        android:textSize="14sp" />
-
-                                    <TextView
-                                        android:id="@+id/tvLastMileage"
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text="--"
-                                        android:textColor="@color/white"
-                                        android:textSize="15sp"
-                                        android:textStyle="bold" />
-                                </LinearLayout>
-
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="8dp"
-                                android:background="@drawable/bg_stat_box"
-                                android:orientation="horizontal"
-                                android:padding="14dp">
-
-                                <TextView
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_weight="1"
-                                    android:text="Average miles per year:"
-                                    android:textColor="@color/white"
-                                    android:textSize="14sp" />
-
-                                <TextView
-                                    android:id="@+id/tvAvgMileage"
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="--"
-                                    android:textColor="@color/white"
-                                    android:textSize="15sp"
-                                    android:textStyle="bold" />
-                            </LinearLayout>
-
-                            <!-- Teal mileage table -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="12dp"
-                                android:background="@drawable/bg_mileage_table"
-                                android:orientation="vertical"
-                                android:padding="14dp">
-
-                                <TextView
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:gravity="center"
-                                    android:text="Mileage Data Table"
-                                    android:textColor="@color/white"
-                                    android:textSize="16sp"
-                                    android:textStyle="bold" />
-
-                                <LinearLayout
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="8dp"
-                                    android:orientation="horizontal">
-
-                                    <TextView
-                                        android:layout_width="0dp"
-                                        android:layout_height="wrap_content"
-                                        android:layout_weight="1"
-                                        android:text="Date"
-                                        android:textColor="@color/white"
-                                        android:textSize="14sp"
-                                        android:textStyle="bold" />
-
-                                    <TextView
-                                        android:layout_width="0dp"
-                                        android:layout_height="wrap_content"
-                                        android:layout_weight="1"
-                                        android:gravity="center"
-                                        android:text="Odometer"
-                                        android:textColor="@color/white"
-                                        android:textSize="14sp"
-                                        android:textStyle="bold" />
-
-                                    <TextView
-                                        android:layout_width="0dp"
-                                        android:layout_height="wrap_content"
-                                        android:layout_weight="1"
-                                        android:gravity="end"
-                                        android:text="+/- Diff"
-                                        android:textColor="@color/white"
-                                        android:textSize="14sp"
-                                        android:textStyle="bold" />
-                                </LinearLayout>
-
-                                <View
-                                    android:layout_width="match_parent"
-                                    android:layout_height="1dp"
-                                    android:layout_marginTop="8dp"
-                                    android:background="#55FFFFFF" />
-
-                                <com.example.vehiclechecker.MileageBarChart
-                                    android:id="@+id/mileageChart"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="160dp"
-                                    android:layout_marginTop="10dp" />
-
-                                <LinearLayout
-                                    android:id="@+id/mileageRowsContainer"
-                                    android:layout_width="match_parent"
-                                    android:layout_height="wrap_content"
-                                    android:orientation="vertical" />
-                            </LinearLayout>
                         </LinearLayout>
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
@@ -745,6 +539,67 @@
                                 android:textSize="15sp"
                                 android:textStyle="bold" />
                         </LinearLayout>
+
+                        <!-- Free running-cost estimate: fuel (from the MOT mileage) + tax -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:background="@drawable/bg_stat_box"
+                            android:orientation="horizontal"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Estimated fuel cost"
+                                android:textColor="@color/white"
+                                android:textSize="14sp" />
+
+                            <TextView
+                                android:id="@+id/tvFuelCost"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="--"
+                                android:textColor="@color/white"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="8dp"
+                            android:background="@drawable/bg_stat_box"
+                            android:orientation="horizontal"
+                            android:padding="14dp">
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Estimated cost to run"
+                                android:textColor="@color/white"
+                                android:textSize="14sp" />
+
+                            <TextView
+                                android:id="@+id/tvRunningTotal"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="--"
+                                android:textColor="@color/brand_yellow"
+                                android:textSize="15sp"
+                                android:textStyle="bold" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tvRunningCostNote"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="6dp"
+                            android:textColor="@color/text_secondary"
+                            android:textSize="11sp" />
 
                         <TextView
                             android:id="@+id/tvComplianceNote"
@@ -1029,44 +884,6 @@
                             android:textColor="@color/text_secondary"
                             android:textSize="11sp"
                             android:textStyle="italic" />
-                    </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
-
-                <!-- Safety recalls -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardRecalls"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:visibility="gone"
-                    app:cardBackgroundColor="@color/card_bg"
-                    app:cardCornerRadius="14dp"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/card_stroke"
-                    app:strokeWidth="1dp">
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical"
-                        android:padding="16dp">
-
-                        <TextView
-                            android:id="@+id/tvRecallTitle"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Safety Recalls"
-                            android:textColor="@color/text_primary"
-                            android:textSize="15sp"
-                            android:textStyle="bold" />
-
-                        <TextView
-                            android:id="@+id/tvRecallDetail"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:layout_marginTop="6dp"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="13sp" />
                     </LinearLayout>
                 </com.google.android.material.card.MaterialCardView>
 
