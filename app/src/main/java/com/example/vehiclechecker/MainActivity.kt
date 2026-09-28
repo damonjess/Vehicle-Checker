@@ -93,6 +93,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 db.vehicleDao().clearHistory()
                 recentSearchesContainer.removeAllViews()
+                db.cachedVehicleDao().purgeOlderThan(System.currentTimeMillis() + 60000)
             }
         }
 
