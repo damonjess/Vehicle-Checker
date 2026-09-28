@@ -1,18 +1,20 @@
 package com.example.vehiclechecker
 
+import android.util.Log
 import com.google.ai.client.generativeai.GenerativeModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 object VehicleAiAnalyst {
 
+    private const val TAG = "VehicleAiAnalyst"
     private const val API_KEY = BuildConfig.GEMINI_API_KEY
 
-    // List of model aliases to try in order (falling back if a model is temporarily unavailable / 503)
+    // List of valid Gemini models to try in order (falling back if a model is temporarily unavailable)
     private val MODELS_TO_TRY = listOf(
-        "gemini-flash-latest",
-        "gemini-flash-lite-latest",
-        "gemini-3.5-flash"
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
     )
 
     suspend fun analyze(vehicle: VehicleData, mot: MotHistoryData?): String {
@@ -37,7 +39,7 @@ object VehicleAiAnalyst {
                 try {
                     val generativeModel = GenerativeModel(
                         modelName = modelName,
-                        apiKey = API_KEY
+                        apiKey = API_KEY,
                     )
                     val response = generativeModel.generateContent(prompt)
                     val text = response.text
@@ -46,11 +48,11 @@ object VehicleAiAnalyst {
                     }
                 } catch (e: Exception) {
                     lastException = e
-                    // Fall back to next model
+                    Log.w(TAG, "Model $modelName failed: ${e.message}")
                 }
             }
 
-            lastException?.printStackTrace()
+            Log.e(TAG, "All AI model attempts failed", lastException)
             return@withContext "AI Analysis is currently unavailable. Please try again in a few moments."
         }
     }

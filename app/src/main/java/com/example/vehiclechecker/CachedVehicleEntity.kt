@@ -1,9 +1,11 @@
 package com.example.vehiclechecker
 
+import androidx.annotation.Keep
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.google.gson.Gson
 
+@Keep
 @Entity(tableName = "cached_vehicles")
 data class CachedVehicleEntity(
     @PrimaryKey val registration: String,

@@ -1,8 +1,10 @@
 package com.example.vehiclechecker
 
+import androidx.annotation.Keep
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+@Keep
 @Entity(tableName = "service_logs")
 data class ServiceLogEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,

@@ -1,5 +1,8 @@
 package com.example.vehiclechecker
 
+import androidx.annotation.Keep
+
+@Keep
 data class VehicleData(
     val registration: String = "",
     val make: String = "",

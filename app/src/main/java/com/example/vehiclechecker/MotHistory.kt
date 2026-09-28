@@ -1,10 +1,12 @@
 package com.example.vehiclechecker
 
+import androidx.annotation.Keep
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.math.max
 import kotlin.math.roundToLong
 
+@Keep
 data class MotHistoryData(
     val registration: String = "",
     val make: String = "",
@@ -163,6 +165,7 @@ data class MotHistoryData(
         }
 }
 
+@Keep
 data class MotTestRecord(
     val dateTested: String = "",
     val result: String = "",          // PASS / FAIL
@@ -189,11 +192,14 @@ data class MotTestRecord(
  * Flags that suggest the recorded mileage may have been tampered with ("clocked"),
  * shown as a warning banner in the Mileage Data section.
  */
+@Keep
 data class MileageAnomaly(
     val title: String,
     val detail: String
 )
 
+@Keep
 enum class RecallStatus { NONE, OUTSTANDING, UNKNOWN }
 
+@Keep
 enum class ConditionTrend { IMPROVING, DEGRADING, STABLE, INSUFFICIENT_DATA }

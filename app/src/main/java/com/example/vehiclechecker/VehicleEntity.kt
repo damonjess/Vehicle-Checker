@@ -1,8 +1,10 @@
 package com.example.vehiclechecker
 
+import androidx.annotation.Keep
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+@Keep
 @Entity(tableName = "recent_searches")
 data class VehicleEntity(
     @PrimaryKey val registration: String,
