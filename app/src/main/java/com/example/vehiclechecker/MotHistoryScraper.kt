@@ -18,10 +18,16 @@ object MotHistoryScraper {
     suspend fun fetchMotHistory(context: Context, registration: String): MotHistoryData {
         val cleanReg = registration.replace(" ", "").uppercase().trim()
 
-        val html = MotWebFetcher.fetchResultsHtml(context.applicationContext, cleanReg)
+        // Pass the caller's context through (not applicationContext): the fetcher attaches its
+        // WebView to the activity window so Chromium runs the challenge JS unthrottled.
+        val html = MotWebFetcher.fetchResultsHtml(context, cleanReg)
             ?: return MotHistoryData(
                 registration = cleanReg,
-                errorMessage = "Could not load MOT history — please try again.",
+                errorMessage = if (MotWebFetcher.lastFailure() == MotWebFetcher.FAILURE_BLOCKED) {
+                    "The MOT site refused the automatic check — tap Retry, or Open in browser to view it."
+                } else {
+                    "MOT history didn't load (${MotWebFetcher.lastFailure() ?: "timeout"}) — tap Retry."
+                },
             )
 
         return withContext(Dispatchers.IO) {
@@ -29,9 +35,25 @@ object MotHistoryScraper {
         }
     }
 
-    private fun parseMotHtml(html: String, cleanReg: String): MotHistoryData {
+    /** Visible to unit tests so the not-found and zero-test answers stay locked in. */
+    internal fun parseMotHtml(html: String, cleanReg: String): MotHistoryData {
         try {
             val doc: Document = Jsoup.parse(html, "https://www.check-mot.service.gov.uk/")
+
+            // When DVSA has no record of the plate at all, the service redirects to its
+            // registration-search page. That is an authoritative "no history" answer, so report
+            // it plainly instead of blaming a fetch problem. A real results page always carries
+            // the plate, so it can never be mistaken for the search page.
+            val searchInput = doc.selectFirst(
+                "input[name=registration], input#registration, form[action*=results]"
+            )
+            if (searchInput != null && doc.selectFirst("[data-test-id=vehicle-registration], .dvsa-vrm") == null) {
+                return MotHistoryData(
+                    registration = cleanReg,
+                    errorMessage = "No MOT history found for $cleanReg",
+                )
+            }
+
             val header = doc.selectFirst("main")?.text() ?: doc.body().text()
 
             // Vehicle summary: dates, colour, fuel, MOT expiry
@@ -148,7 +170,9 @@ object MotHistoryScraper {
             }
 
             // No records at all (e.g. brand new vehicle)
-            if (tests.isEmpty() && motValidUntil.isBlank() && header.contains("no MOT", ignoreCase = true)) {
+            if (tests.isEmpty() && motValidUntil.isBlank() &&
+                Regex("no MOT|no test|no record|not found", RegexOption.IGNORE_CASE).containsMatchIn(header)
+            ) {
                 return MotHistoryData(
                     registration = cleanReg,
                     errorMessage = "No MOT records found for $cleanReg",

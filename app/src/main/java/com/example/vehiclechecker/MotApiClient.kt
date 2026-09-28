@@ -24,16 +24,25 @@ object MotApiClient {
     @Volatile
     private var tokenExpiryTimeMs: Long = 0L
 
+    private val placeholderValues = setOf(
+        "your_client_id", "your_client_secret", "your_tenant_id",
+        "your_api_key", "your_provided_scope_url"
+    )
+
     /** Checks if credentials in local.properties / BuildConfig are configured. */
     fun isConfigured(): Boolean {
-        val clientId = BuildConfig.MOT_CLIENT_ID
-        val clientSecret = BuildConfig.MOT_CLIENT_SECRET
-        val tenantId = BuildConfig.MOT_TENANT_ID
-        val apiKey = BuildConfig.MOT_API_KEY
-        return clientId.isNotBlank() && clientId != "YOUR_CLIENT_ID" &&
-                clientSecret.isNotBlank() && clientSecret != "YOUR_CLIENT_SECRET" &&
-                tenantId.isNotBlank() && tenantId != "YOUR_TENANT_ID" &&
-                apiKey.isNotBlank() && apiKey != "YOUR_API_KEY"
+        val clientId = BuildConfig.MOT_CLIENT_ID.trim()
+        val clientSecret = BuildConfig.MOT_CLIENT_SECRET.trim()
+        val tenantId = BuildConfig.MOT_TENANT_ID.trim()
+        val apiKey = BuildConfig.MOT_API_KEY.trim()
+        val scope = BuildConfig.MOT_SCOPE.trim()
+        // Case-insensitive placeholder detection: "your_tenant_id" must not count as configured
+        // just because it differs in case from the documented placeholder.
+        val values = listOf(clientId, clientSecret, tenantId, apiKey, scope)
+        if (values.any { it.isBlank() || it.lowercase() in placeholderValues }) return false
+        // Client-credential flows require a resource URI with /.default (e.g.
+        // https://history.mot.api.gov.uk/.default); anything else fails OAuth with invalid_scope.
+        return scope.startsWith("https://")
     }
 
     @Throws(SecurityException::class, IOException::class)

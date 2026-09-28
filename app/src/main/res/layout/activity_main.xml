@@ -412,6 +412,29 @@
                             android:textColor="@color/text_secondary"
                             android:textSize="13sp" />
 
+                        <LinearLayout
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center_horizontal"
+                            android:layout_marginTop="8dp"
+                            android:orientation="horizontal">
+
+                            <Button
+                                android:id="@+id/btnRetryMot"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Retry"
+                                android:visibility="gone" />
+
+                            <Button
+                                android:id="@+id/btnOpenMotBrowser"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginStart="8dp"
+                                android:text="Open in browser"
+                                android:visibility="gone" />
+                        </LinearLayout>
+
                         <!-- Dark MOT insights panel: gap years, pass rate, pie chart -->
                         <LinearLayout
                             android:id="@+id/insightsPanel"

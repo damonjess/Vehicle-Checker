@@ -100,6 +100,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Retry button on the MOT card (shown when a fetch fails)
+        findViewById<View>(R.id.btnRetryMot).setOnClickListener { retryMotFetch() }
+
+        // Fallback: the MOT site blocks automated clients, so let the user view the
+        // official page in their real browser (where the security check passes).
+        findViewById<View>(R.id.btnOpenMotBrowser).setOnClickListener {
+            if (currentReg.isEmpty()) return@setOnClickListener
+            try {
+                startActivity(
+                    Intent(
+                        Intent.ACTION_VIEW,
+                        android.net.Uri.parse(
+                            "https://www.check-mot.service.gov.uk/results?registration=$currentReg&checkRecalls=true"
+                        )
+                    )
+                )
+            } catch (_: Exception) {
+            }
+        }
+
+        // Dev/debug hook: `adb shell am start -n com.example.vehiclechecker/.MainActivity --es plate ABC123`
+        // runs a lookup immediately on launch.
+        intent?.getStringExtra("plate")?.takeIf { it.isNotBlank() }?.let { plate ->
+            etPlate.setText(plate.uppercase())
+            checkPlate(plate)
+        }
+
+        // NOTE: no background challenge warm-up here — running it alongside a real fetch
+        // means two WebViews hitting the bot challenge at once, which escalates the block.
+
         // Daily expiry reminder worker + notification permission
         ReminderScheduler.scheduleDailyCheck(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -337,7 +367,8 @@ class MainActivity : AppCompatActivity() {
             val cached = db.cachedVehicleDao().get(clean.uppercase())
             val cachedMotRaw = cached?.toMot()
             
-            fun isUsable(mot: MotHistoryData?): Boolean = mot != null && mot.tests.isNotEmpty()
+            fun isUsable(mot: MotHistoryData?): Boolean =
+                mot != null && mot.errorMessage == null && mot.tests.isNotEmpty()
             val cachedMot = cachedMotRaw?.takeIf { isUsable(it) }
             
             Log.d("MotCache", "reg=${clean.uppercase()} cachedRow=${cached != null} motJsonLen=${cached?.motJson?.length} raw tests=${cachedMotRaw?.tests?.size} err=${cachedMotRaw?.errorMessage} usable=${cachedMot != null}")
@@ -407,6 +438,11 @@ class MainActivity : AppCompatActivity() {
             currentVehicle = liveVehicle
             bindResult(liveVehicle)
             resultsContainer.visibility = View.VISIBLE
+
+            // The MOT fetch (WebView challenge) can take 15-45s. Show the card right away
+            // with a loading note so it's never silently absent — bindMotSection() swaps in
+            // the real content (or a visible error reason) when the fetch settles.
+            if (currentMot == null) showMotSectionLoading()
             
             // Only save to history if DVLA succeeded, to avoid cluttering recent searches with failed plates
             if (liveVehicle.errorMessage == null) {
@@ -417,13 +453,22 @@ class MainActivity : AppCompatActivity() {
             showFavouriteState(currentReg)
             loadServiceLogs()
 
-            // Fresh MOT history: Smart Routing
-            val mot = if (MotApiClient.isConfigured()) {
+            // Fresh MOT history: official DVSA API first (only when fully configured),
+            // then the public GOV.UK WebView scraper, then the offline cache. A broken or
+            // rate-limited API must never leave the card empty while the scraper works.
+            var mot: MotHistoryData? = null
+            if (MotApiClient.isConfigured()) {
                 Log.d("MotFetch", "Fetching MOT history via official DVSA API for $currentReg")
-                MotApiClient.fetchMotHistory(currentReg)
+                mot = MotApiClient.fetchMotHistory(currentReg)
+                if (!isUsable(mot)) {
+                    Log.w("MotFetch", "API fetch unusable (${mot?.errorMessage}); falling back to WebView scraper")
+                }
             } else {
-                Log.d("MotFetch", "API not configured yet. Falling back to WebView Scraper for $currentReg")
-                MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
+                Log.d("MotFetch", "API not configured. Using WebView Scraper for $currentReg")
+            }
+            if (!isUsable(mot)) {
+                // Activity context so the fetcher can attach its WebView to this window
+                mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, currentReg)
             }
 
             val existingCache = db.cachedVehicleDao().get(currentReg)
@@ -626,6 +671,39 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Placeholder state for the MOT card while the live fetch is still running. */
+    private fun showMotSectionLoading() {
+        findViewById<View>(R.id.cardMotHistory).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.tvMotHistorySummary).text = "Loading MOT history…"
+        findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
+        findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.GONE
+        findViewById<View>(R.id.insightsPanel).visibility = View.GONE
+        findViewById<View>(R.id.motTestsContainer).visibility = View.GONE
+        findViewById<View>(R.id.mileageSection).visibility = View.GONE
+        findViewById<View>(R.id.cardRecalls).visibility = View.GONE
+    }
+
+    /** Re-runs only the MOT fetch for the plate currently on screen. */
+    private fun retryMotFetch() {
+        if (currentReg.isEmpty()) return
+        findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
+        showMotSectionLoading()
+        lifecycleScope.launch {
+            val mot = MotHistoryScraper.fetchMotHistory(this@MainActivity, currentReg)
+            if (MotHistoryScraper.isUsable(mot)) {
+                currentMot = mot
+                bindMotSection(mot)
+                val existingCache = db.cachedVehicleDao().get(currentReg)
+                val vehicle = currentVehicle ?: return@launch
+                db.cachedVehicleDao().upsert(
+                    CachedVehicleEntity.fromData(vehicle, mot, existingCache?.aiReport)
+                )
+            } else {
+                bindMotSection(mot ?: MotHistoryData(registration = currentReg, errorMessage = "Could not load MOT history — please try again."))
+            }
+        }
+    }
+
     private fun bindMotSection(history: MotHistoryData) {
         val cardMotHistory = findViewById<View>(R.id.cardMotHistory)
         val tvSummary = findViewById<TextView>(R.id.tvMotHistorySummary)
@@ -638,12 +716,17 @@ class MainActivity : AppCompatActivity() {
                 findViewById<View>(R.id.motTestsContainer).visibility = View.GONE
                 findViewById<View>(R.id.mileageSection).visibility = View.GONE
                 findViewById<View>(R.id.cardRecalls).visibility = View.GONE
+                findViewById<View>(R.id.btnRetryMot).visibility = View.VISIBLE
+                findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.VISIBLE
                 cardMotHistory.visibility = View.VISIBLE
             } else {
                 cardMotHistory.visibility = View.GONE
             }
             return
         }
+
+        findViewById<View>(R.id.btnRetryMot).visibility = View.GONE
+        findViewById<View>(R.id.btnOpenMotBrowser).visibility = View.GONE
 
         tvSummary.text = buildString {
             append(history.make)
