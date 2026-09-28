@@ -143,10 +143,12 @@ class MainActivity : AppCompatActivity() {
                 // Ask Gemini!
                 val analysis = VehicleAiAnalyst.analyze(vehicle, currentMot)
 
-                val existingCache = db.cachedVehicleDao().get(currentReg)
-                if (existingCache != null) {
-                    // Update the existing cache with the new report
-                    db.cachedVehicleDao().upsert(existingCache.copy(aiReport = analysis))
+                if (!analysis.startsWith("AI Analysis is currently unavailable")) {
+                    val existingCache = db.cachedVehicleDao().get(currentReg)
+                    if (existingCache != null) {
+                        // Update the existing cache with the new report
+                        db.cachedVehicleDao().upsert(existingCache.copy(aiReport = analysis))
+                    }
                 }
 
                 // Update UI with results
@@ -373,16 +375,27 @@ class MainActivity : AppCompatActivity() {
 
             // Fresh MOT history + cache the combined payload for offline use
             val mot = MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
+            val existingCache = db.cachedVehicleDao().get(currentReg)
+
             if (mot.errorMessage == null) {
                 currentMot = mot
                 bindMotSection(mot)
-                db.cachedVehicleDao().upsert(CachedVehicleEntity.fromData(result, mot))
+                db.cachedVehicleDao().upsert(
+                    CachedVehicleEntity.fromData(result, mot, existingCache?.aiReport)
+                )
             } else {
-                if (currentMot != null) {
-                    // Preserve valid cached MOT data if live fetch failed
-                    db.cachedVehicleDao().upsert(CachedVehicleEntity.fromData(result, currentMot))
+                // Live fetch failed (usually bot protection) — fall back to the cached
+                // MOT instead of collapsing the card to an error message
+                val cachedMot = existingCache?.toMot()
+                val fallback = currentMot ?: cachedMot
+                if (fallback != null) {
+                    currentMot = fallback
+                    bindMotSection(fallback)
+                    db.cachedVehicleDao().upsert(
+                        CachedVehicleEntity.fromData(result, fallback, existingCache?.aiReport)
+                    )
                 } else {
-                    bindMotSection(mot)
+                    bindMotSection(mot) // genuinely no data: show the reason
                 }
             }
         }

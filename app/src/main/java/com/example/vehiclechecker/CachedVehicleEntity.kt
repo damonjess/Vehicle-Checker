@@ -17,11 +17,12 @@ data class CachedVehicleEntity(
     companion object {
         private val gson = Gson()
 
-        fun fromData(vehicle: VehicleData, mot: MotHistoryData?): CachedVehicleEntity =
+        fun fromData(vehicle: VehicleData, mot: MotHistoryData?, aiReport: String? = null): CachedVehicleEntity =
             CachedVehicleEntity(
                 registration = vehicle.registration.replace(" ", "").uppercase(),
                 vehicleJson = gson.toJson(vehicle),
-                motJson = mot?.let { gson.toJson(it) } ?: ""
+                motJson = mot?.let { gson.toJson(it) } ?: "",
+                aiReport = aiReport
             )
     }
 
