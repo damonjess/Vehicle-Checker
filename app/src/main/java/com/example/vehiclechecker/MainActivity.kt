@@ -387,8 +387,6 @@ class MainActivity : AppCompatActivity() {
 
             // DVLA details via the free GOV.UK enquiry service
             val result = VehicleScraper.scrapeVehicleData(clean, this@MainActivity)
-            progressBar.visibility = View.GONE
-            btnCheck.isEnabled = true
 
             // Ensure registration is set even if DVLA scraping failed completely
             val liveVehicle = if (result.registration.isBlank()) {
@@ -419,9 +417,14 @@ class MainActivity : AppCompatActivity() {
             showFavouriteState(currentReg)
             loadServiceLogs()
 
-            // Fresh MOT history: try official DVSA API only
-            Log.d("MotFetch", "Fetching MOT history via DVSA API for $currentReg")
-            val mot = MotApiClient.fetchMotHistory(currentReg)
+            // Fresh MOT history: Smart Routing
+            val mot = if (MotApiClient.isConfigured()) {
+                Log.d("MotFetch", "Fetching MOT history via official DVSA API for $currentReg")
+                MotApiClient.fetchMotHistory(currentReg)
+            } else {
+                Log.d("MotFetch", "API not configured yet. Falling back to WebView Scraper for $currentReg")
+                MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
+            }
 
             val existingCache = db.cachedVehicleDao().get(currentReg)
 
@@ -447,6 +450,9 @@ class MainActivity : AppCompatActivity() {
                     bindMotSection(mot ?: MotHistoryData(registration = currentReg, errorMessage = "Could not load MOT history — please try again."))
                 }
             }
+
+            progressBar.visibility = View.GONE
+            btnCheck.isEnabled = true
         }
     }
 
