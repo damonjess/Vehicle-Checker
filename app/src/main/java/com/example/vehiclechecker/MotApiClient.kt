@@ -229,6 +229,16 @@ object MotApiClient {
                 ?.mapNotNull { it.text?.trim()?.takeIf(String::isNotEmpty) }
                 ?: emptyList()
 
+            val failures = test.defects
+                ?.filter { !it.type.equals("ADVISORY", ignoreCase = true) && !it.type.equals("MINOR", ignoreCase = true) }
+                ?.mapNotNull { defect ->
+                    val text = defect.text?.trim()?.takeIf(String::isNotEmpty) ?: return@mapNotNull null
+                    if (defect.dangerous) "[DANGEROUS] $text" else text
+                }
+                ?: emptyList()
+
+            safeLogD("MotApiClient", "Parsed test on $dateTestedFormatted: Result=$normalisedResult, Failures=${failures.size}, Advisories=${advisories.size}")
+
             MotTestRecord(
                 dateTested = dateTestedFormatted,
                 result = normalisedResult,
@@ -236,7 +246,8 @@ object MotApiClient {
                 mileageMiles = m,
                 testNumber = test.motTestNumber ?: "",
                 expiryDate = expiryDateFormatted,
-                advisories = advisories
+                advisories = advisories,
+                failures = failures
             )
         }
 
@@ -283,5 +294,13 @@ object MotApiClient {
         val out = DateTimeFormatter.ofPattern("d MMMM yyyy", Locale.UK)
         val ymd = raw.trim().take(10).replace('.', '-').replace('/', '-')
         return try { LocalDate.parse(ymd).format(out) } catch (e: Exception) { raw.trim() }
+    }
+
+    private fun safeLogD(tag: String, msg: String) {
+        try {
+            Log.d(tag, msg)
+        } catch (_: Throwable) {
+            // Ignored during local JVM unit tests
+        }
     }
 }

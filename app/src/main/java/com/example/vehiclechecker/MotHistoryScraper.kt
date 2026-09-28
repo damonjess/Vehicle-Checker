@@ -1,6 +1,7 @@
 package com.example.vehiclechecker
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
@@ -119,13 +120,67 @@ object MotHistoryScraper {
                 val testNumber = item.selectFirst("[data-test-id=test-number]")?.text()?.trim() ?: ""
                 val expiryDate = item.selectFirst("[data-test-id=expiry-date]")?.text()?.trim() ?: ""
 
-                val advisories = item.select("li")
-                    .map { it.text().trim() }
-                    .filter {
-                        it.isNotBlank() &&
-                            !it.contains("What are advisories", true) &&
-                            !it.contains("Advisories are given", true)
+                val isPass = result.equals("PASS", ignoreCase = true)
+                val failures = mutableListOf<String>()
+                val advisories = mutableListOf<String>()
+
+                val failElements = item.select("[data-test-id=fail-item], [data-test-id=failure-item], [data-test-id=defect-item], .defect-item, .fail-item")
+                val advisoryElements = item.select("[data-test-id=advisory-item], .advisory-item")
+
+                if (failElements.isNotEmpty() || advisoryElements.isNotEmpty()) {
+                    failElements.forEach { el ->
+                        val text = el.text().trim()
+                        if (text.isNotBlank() && !text.contains("What are", true)) failures.add(text)
                     }
+                    advisoryElements.forEach { el ->
+                        val text = el.text().trim()
+                        if (text.isNotBlank() && !text.contains("What are", true)) advisories.add(text)
+                    }
+                } else {
+                    var currentSection = if (!isPass) "FAILURE" else "ADVISORY"
+                    val blockElements = item.select("h3, h4, h5, p, div.govuk-heading-s, li")
+                    for (el in blockElements) {
+                        val text = el.text().trim()
+                        if (text.isBlank() || text.contains("What are advisories", true) || text.contains("Advisories are given", true)) continue
+
+                        val upper = text.uppercase()
+                        if (upper.contains("FAILURE") || upper.contains("MAJOR DEFECT") || upper.contains("DANGEROUS DEFECT")) {
+                            currentSection = "FAILURE"
+                            continue
+                        } else if (upper.contains("ADVISOR") || upper.contains("MONITOR AND REPAIR")) {
+                            currentSection = "ADVISORY"
+                            continue
+                        } else if (upper.contains("MINOR DEFECT")) {
+                            currentSection = "ADVISORY"
+                            continue
+                        }
+
+                        if (el.tagName() == "li" || el.hasClass("govuk-list--bullet")) {
+                            if (currentSection == "FAILURE") {
+                                if (!failures.contains(text)) failures.add(text)
+                            } else {
+                                if (!advisories.contains(text)) advisories.add(text)
+                            }
+                        }
+                    }
+
+                    if (failures.isEmpty() && advisories.isEmpty()) {
+                        val allLi = item.select("li")
+                            .map { it.text().trim() }
+                            .filter {
+                                it.isNotBlank() &&
+                                    !it.contains("What are advisories", true) &&
+                                    !it.contains("Advisories are given", true)
+                            }
+                        if (isPass) {
+                            advisories.addAll(allLi)
+                        } else {
+                            failures.addAll(allLi)
+                        }
+                    }
+                }
+
+                safeLogD("MotScraper", "Parsed test on $dateTested: Result=$result, Failures=${failures.size}, Advisories=${advisories.size}")
 
                 if (dateTested.isNotBlank() && result.isNotBlank()) {
                     tests.add(
@@ -137,6 +192,7 @@ object MotHistoryScraper {
                             testNumber = testNumber,
                             expiryDate = expiryDate,
                             advisories = advisories,
+                            failures = failures,
                         ),
                     )
                 }
@@ -225,4 +281,12 @@ object MotHistoryScraper {
     /** "51,801 miles" -> 51801 */
     private fun parseMileage(text: String): Int? =
         text.replace(Regex("[^0-9]"), "").takeIf { it.isNotEmpty() }?.toIntOrNull()
+
+    private fun safeLogD(tag: String, msg: String) {
+        try {
+            Log.d(tag, msg)
+        } catch (_: Throwable) {
+            // Ignored during local JVM unit tests
+        }
+    }
 }

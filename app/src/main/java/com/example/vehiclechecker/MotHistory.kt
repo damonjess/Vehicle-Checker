@@ -174,7 +174,8 @@ data class MotTestRecord(
     val mileageDifference: Int? = null, // miles since previous test (null for oldest test)
     val testNumber: String = "",
     val expiryDate: String = "",
-    val advisories: List<String> = emptyList()
+    val advisories: List<String> = emptyList(),
+    val failures: List<String> = emptyList()
 ) {
     val isPass: Boolean get() = result.equals("PASS", ignoreCase = true)
     val yearTested: Int?

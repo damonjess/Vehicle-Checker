@@ -175,8 +175,7 @@ class MainActivity : AppCompatActivity() {
         val aiProgressBar = findViewById<ProgressBar>(R.id.aiProgressBar)
 
         btnAskAi.setOnClickListener {
-            val vehicle = currentVehicle
-            if (vehicle == null) return@setOnClickListener
+            val vehicle = currentVehicle ?: return@setOnClickListener
 
             // Update UI to loading state
             btnAskAi.isEnabled = false
@@ -184,6 +183,11 @@ class MainActivity : AppCompatActivity() {
             aiProgressBar.visibility = View.VISIBLE
 
             lifecycleScope.launch {
+                // If MOT fetch is still running, wait for it to complete so currentMot is populated
+                if (currentMot == null && searchJob?.isActive == true) {
+                    searchJob?.join()
+                }
+
                 // Ask Gemini!
                 val analysis = VehicleAiAnalyst.analyze(vehicle, currentMot)
 
