@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
 import android.text.InputType
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
@@ -14,6 +15,7 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -316,6 +318,10 @@ class MainActivity : AppCompatActivity() {
         progressBar.visibility = View.VISIBLE
         btnCheck.isEnabled = false
 
+        // Clear current state to avoid bleeding data from a previous search
+        currentMot = null
+        currentVehicle = null
+
         // Reset AI Analyst UI state
         findViewById<TextView>(R.id.tvAiResult).visibility = View.GONE
         findViewById<ProgressBar>(R.id.aiProgressBar).visibility = View.GONE
@@ -330,7 +336,15 @@ class MainActivity : AppCompatActivity() {
             // earlier parser bug — ignore it so the charts don't render blank forever.
             val cached = db.cachedVehicleDao().get(clean.uppercase())
             val cachedMotRaw = cached?.toMot()
-            val cachedMot = cachedMotRaw?.takeIf { MotHistoryScraper.isUsable(it) }
+            
+            fun isUsable(mot: MotHistoryData?): Boolean = mot != null && mot.tests.isNotEmpty()
+            val cachedMot = cachedMotRaw?.takeIf { isUsable(it) }
+            
+            Log.d("MotCache", "reg=${clean.uppercase()} cachedRow=${cached != null} motJsonLen=${cached?.motJson?.length} raw tests=${cachedMotRaw?.tests?.size} err=${cachedMotRaw?.errorMessage} usable=${cachedMot != null}")
+            
+            val nowMs = System.currentTimeMillis()
+            val isCacheFresh = cached != null && cachedMot != null && (nowMs - cached.timestamp < 24L * 60 * 60 * 1000L)
+
             if (cached != null) {
                 progressBar.visibility = View.GONE
                 val cachedVehicle = cached.toVehicle()
@@ -360,50 +374,77 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            if (isCacheFresh) {
+                Log.d("MotCache", "Cache is under 24h old, skipping live fetch for $clean")
+                btnCheck.isEnabled = true
+                
+                // Keep "Recent searches" ordering updated even if we skip the live fetch
+                val cachedVehicle = cached.toVehicle()
+                saveAndShowHistory(cachedVehicle)
+                
+                return@launch
+            }
+
             // DVLA details via the free GOV.UK enquiry service
             val result = VehicleScraper.scrapeVehicleData(clean, this@MainActivity)
             progressBar.visibility = View.GONE
             btnCheck.isEnabled = true
 
-            if (result.errorMessage != null) {
-                if (cached == null) {
-                    tvError.text = result.errorMessage
-                    tvError.visibility = View.VISIBLE
-                }
-                return@launch // cached results (if any) stay on screen
+            // Ensure registration is set even if DVLA scraping failed completely
+            val liveVehicle = if (result.registration.isBlank()) {
+                result.copy(registration = clean.uppercase())
+            } else {
+                result
             }
 
-            currentReg = result.registration.replace(" ", "").uppercase()
-            currentVehicle = result
-            bindResult(result)
+            if (liveVehicle.errorMessage != null) {
+                if (cached == null) {
+                    tvError.text = liveVehicle.errorMessage
+                    tvError.visibility = View.VISIBLE
+                }
+                // Do NOT return early. Continue to fetch MOT history and show the banners.
+            }
+
+            currentReg = liveVehicle.registration.replace(" ", "").uppercase()
+            currentVehicle = liveVehicle
+            bindResult(liveVehicle)
             resultsContainer.visibility = View.VISIBLE
-            saveAndShowHistory(result)
+            
+            // Only save to history if DVLA succeeded, to avoid cluttering recent searches with failed plates
+            if (liveVehicle.errorMessage == null) {
+                saveAndShowHistory(liveVehicle)
+            }
+            
             loadNote(currentReg)
             showFavouriteState(currentReg)
             loadServiceLogs()
 
-            // Fresh MOT history + cache the combined payload for offline use
-            val mot = MotHistoryScraper.fetchMotHistory(applicationContext, currentReg)
+            // Fresh MOT history: try official DVSA API only
+            Log.d("MotFetch", "Fetching MOT history via DVSA API for $currentReg")
+            val mot = MotApiClient.fetchMotHistory(currentReg)
+
             val existingCache = db.cachedVehicleDao().get(currentReg)
 
-            if (MotHistoryScraper.isUsable(mot)) {
+            if (isUsable(mot) && mot != null) {
                 currentMot = mot
                 bindMotSection(mot)
                 db.cachedVehicleDao().upsert(
-                    CachedVehicleEntity.fromData(result, mot, existingCache?.aiReport)
+                    CachedVehicleEntity.fromData(liveVehicle, mot, existingCache?.aiReport)
                 )
             } else {
-                // Live fetch failed (usually bot protection or a partial page) — fall back
-                // to any usable cached MOT instead of collapsing the card to an error.
-                val fallback = currentMot?.takeIf { MotHistoryScraper.isUsable(it) } ?: cachedMot
+                // Live fetch failed (could be rate limit, unconfigured API, missing vehicle, network error)
+                // Fall back to any usable cached MOT instead of collapsing the card to an error.
+                val fallback = currentMot?.takeIf { isUsable(it) } ?: cachedMot
                 if (fallback != null) {
                     currentMot = fallback
                     bindMotSection(fallback)
                     db.cachedVehicleDao().upsert(
-                        CachedVehicleEntity.fromData(result, fallback, existingCache?.aiReport)
+                        CachedVehicleEntity.fromData(liveVehicle, fallback, existingCache?.aiReport)
+                            .copy(timestamp = existingCache?.timestamp ?: System.currentTimeMillis())
                     )
+                    Toast.makeText(this@MainActivity, "Showing saved MOT data (live fetch failed)", Toast.LENGTH_SHORT).show()
                 } else {
-                    bindMotSection(mot) // genuinely no data: show the reason
+                    bindMotSection(mot ?: MotHistoryData(registration = currentReg, errorMessage = "Could not load MOT history — please try again."))
                 }
             }
         }
@@ -444,9 +485,12 @@ class MainActivity : AppCompatActivity() {
         if (result.motStatus.equals("Valid", ignoreCase = true)) {
             cardMot.setBackgroundColor(ContextCompat.getColor(this, R.color.status_success))
             tvMotStatus.text = "✓ MOT Valid"
-        } else {
+        } else if (result.motStatus.isNotBlank()) {
             cardMot.setBackgroundColor(ContextCompat.getColor(this, R.color.status_danger))
             tvMotStatus.text = "✗ MOT Expired"
+        } else {
+            cardMot.setBackgroundColor(ContextCompat.getColor(this, R.color.text_secondary))
+            tvMotStatus.text = "MOT status unknown"
         }
         tvMotExpiry.text = result.motExpiryDate
 
@@ -580,19 +624,18 @@ class MainActivity : AppCompatActivity() {
         val cardMotHistory = findViewById<View>(R.id.cardMotHistory)
         val tvSummary = findViewById<TextView>(R.id.tvMotHistorySummary)
 
-        if (history.errorMessage != null) {
-            // Show the card with the reason so failures are visible, not silent
-            tvSummary.text = history.errorMessage
-            findViewById<View>(R.id.insightsPanel).visibility = View.GONE
-            findViewById<View>(R.id.motTestsContainer).visibility = View.GONE
-            findViewById<View>(R.id.mileageSection).visibility = View.GONE
-            findViewById<View>(R.id.cardRecalls).visibility = View.GONE
-            cardMotHistory.visibility = View.VISIBLE
-            return
-        }
-
         if (history.tests.isEmpty()) {
-            cardMotHistory.visibility = View.GONE
+            if (history.errorMessage != null) {
+                // Show the card with the reason so failures are visible, not silent
+                tvSummary.text = history.errorMessage
+                findViewById<View>(R.id.insightsPanel).visibility = View.GONE
+                findViewById<View>(R.id.motTestsContainer).visibility = View.GONE
+                findViewById<View>(R.id.mileageSection).visibility = View.GONE
+                findViewById<View>(R.id.cardRecalls).visibility = View.GONE
+                cardMotHistory.visibility = View.VISIBLE
+            } else {
+                cardMotHistory.visibility = View.GONE
+            }
             return
         }
 

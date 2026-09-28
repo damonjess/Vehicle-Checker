@@ -12,6 +12,11 @@ val localProperties = Properties().apply {
     }
 }
 val geminiApiKey = localProperties.getProperty("GEMINI_API_KEY") ?: "YOUR_GEMINI_API_KEY_HERE"
+val motClientId = localProperties.getProperty("MOT_CLIENT_ID") ?: "YOUR_CLIENT_ID"
+val motClientSecret = localProperties.getProperty("MOT_CLIENT_SECRET") ?: "YOUR_CLIENT_SECRET"
+val motTenantId = localProperties.getProperty("MOT_TENANT_ID") ?: "YOUR_TENANT_ID"
+val motApiKey = localProperties.getProperty("MOT_API_KEY") ?: "YOUR_API_KEY"
+val motScope = localProperties.getProperty("MOT_SCOPE") ?: "YOUR_PROVIDED_SCOPE_URL"
 
 android {
     namespace = "com.example.vehiclechecker"
@@ -31,25 +36,23 @@ android {
         versionName = "1.0"
 
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
+        buildConfigField("String", "MOT_CLIENT_ID", "\"$motClientId\"")
+        buildConfigField("String", "MOT_CLIENT_SECRET", "\"$motClientSecret\"")
+        buildConfigField("String", "MOT_TENANT_ID", "\"$motTenantId\"")
+        buildConfigField("String", "MOT_API_KEY", "\"$motApiKey\"")
+        buildConfigField("String", "MOT_SCOPE", "\"$motScope\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    buildTypes {
-        release {
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-            optimization {
-                enable = false
-            }
-        }
-    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+}
+
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
