@@ -151,11 +151,19 @@ class MainActivity : AppCompatActivity() {
             checkPlate(plate)
         }
 
+        // Dev/debug hook: `adb shell am start -n com.example.vehiclechecker/.MainActivity --ez refresh true`
+        // runs the weekly tax/MOT status refresh immediately instead of waiting for its schedule.
+        if (intent?.getBooleanExtra("refresh", false) == true) {
+            ReminderScheduler.runStatusRefreshNow(this)
+        }
+
         // NOTE: no background challenge warm-up here — running it alongside a real fetch
         // means two WebViews hitting the bot challenge at once, which escalates the block.
 
         // Daily expiry reminder worker + notification permission
         ReminderScheduler.scheduleDailyCheck(this)
+        // Weekly live re-check of tax/MOT dates so those reminders stay accurate
+        ReminderScheduler.scheduleWeeklyStatusRefresh(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 100)
         }

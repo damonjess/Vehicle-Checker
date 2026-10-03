@@ -23,6 +23,18 @@ interface VehicleDao {
     @Query("UPDATE recent_searches SET isFavourite = :favourite WHERE registration = :registration")
     suspend fun setFavourite(registration: String, favourite: Boolean)
 
+    // Background status refresh: rewrite only the expiry dates so a periodic re-check
+    // cannot disturb the recent-search ordering (timestamp) or the favourite flag.
+    @Query(
+        "UPDATE recent_searches SET taxDueEpochMs = :taxDueEpochMs, " +
+            "motExpiryEpochMs = :motExpiryEpochMs WHERE registration = :registration"
+    )
+    suspend fun updateExpiryDates(
+        registration: String,
+        taxDueEpochMs: Long?,
+        motExpiryEpochMs: Long?
+    )
+
     // Optional: Let the user clear their history
     @Query("DELETE FROM recent_searches")
     suspend fun clearHistory()
