@@ -68,6 +68,9 @@ object MotWebFetcher {
     /** How many times we re-issue the navigation with browser headers before giving up. */
     private const val MAX_NAV_ATTEMPTS = 4
 
+    /** Polls to allow a results page with no rows (yet) before capturing it as-is. */
+    private const val NOROWS_CAPTURE_POLLS = 4
+
     private const val ACCEPT_HEADER =
         "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
 
@@ -101,12 +104,20 @@ object MotWebFetcher {
             "ft=(cd.title||'')+' '+((cd.body?cd.body.innerText:'')||'')+' '+((cd.documentElement?cd.documentElement.outerHTML:'').slice(0,400));}}catch(e){}" +
             "var all=t+' '+ft;" +
             "if(/Access denied|Error 15|blocked by our security service|Additional security check is required|Why am I seeing this page/i.test(all))return 'BLOCKED';" +
-            "if(d.querySelectorAll('[data-test-id=test-history-item],[data-test-id=test-result],[data-test-id=vehicle-registration]').length>0)return 'READY';" +
             // For a registration DVSA has never seen, the service bounces back to its
             // registration-search page (path "/" plus a registration input) instead of rendering
             // an empty results page. Recognise that as an answer, not as a page still loading.
             "if(location.pathname==='/'&&d.querySelector('input[name=registration],input#registration,form[action*=results]'))return 'NOTFOUND';" +
+            // A vehicle too new to have been tested: the results page renders the accordion
+            // shell plus this marker and no rows at all. A real answer, so stop waiting.
+            "if(d.querySelector('[data-test-id=vehicle-not-had-first-test]'))return 'NOTESTS';" +
+            // READY must mean actual test rows are on the page. Matching only the plate used to
+            // fire while the list was still empty, which handed the parser a page with no rows.
+            "if(d.querySelectorAll('[data-test-id=test-history-item],[data-test-id=test-result]').length>0)return 'READY';" +
             "if(/no MOT|not found|no test history/i.test(t))return 'EMPTY';" +
+            // Results shell rendered but no rows (yet): give it a few polls, then capture what
+            // we have so the parser can report it accurately instead of timing out.
+            "if(d.querySelector('[data-test-id=vehicle-registration]'))return 'NOROWS';" +
             "if(h.indexOf('initializeProtection')!==-1||h.indexOf('Pardon Our Interruption')!==-1||f)return 'INTERSTITIAL';" +
             "return 'WAITING';}catch(e){return 'WAITING';}})()"
 
@@ -301,10 +312,24 @@ object MotWebFetcher {
                             lastState = state
                         }
                         when (state) {
-                            "READY", "EMPTY", "NOTFOUND" -> view.evaluateJavascript(
+                            "READY", "EMPTY", "NOTFOUND", "NOTESTS" -> view.evaluateJavascript(
                                 "window.AndroidBridge.processHTML(document.documentElement.outerHTML);",
                                 null,
                             )
+                            "NOROWS" -> {
+                                // Rows are server-rendered, so if they exist they are there on the
+                                // first poll. A few extra polls cover a slow render; after that,
+                                // capture — the parser turns "no rows" into a proper message.
+                                if (polls >= NOROWS_CAPTURE_POLLS) {
+                                    Log.d(TAG, "no test rows after $polls polls — capturing the page as-is")
+                                    view.evaluateJavascript(
+                                        "window.AndroidBridge.processHTML(document.documentElement.outerHTML);",
+                                        null,
+                                    )
+                                } else {
+                                    mainHandler.postDelayed({ poll(view) }, POLL_INTERVAL_MS)
+                                }
+                            }
                             "BLOCKED" -> {
                                 // Imperva's hard block page. The extra navigation headers are
                                 // usually to blame when this reappears: the challenge interstitial

@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Typeface
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.text.InputType
 import android.util.Log
 import android.view.Gravity
@@ -26,11 +27,18 @@ import androidx.lifecycle.lifecycleScope
 import io.noties.markwon.Markwon
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
     private val db by lazy { AppDatabase.getDatabase(this) }
+
+    /** How long the AI button waits on a running MOT fetch before analysing without it. */
+    private val AI_MOT_WAIT_MS = 10_000L
+
+    /** Minimum gap between streamed render updates, so Markwon isn't re-parsing per token. */
+    private val AI_RENDER_INTERVAL_MS = 250L
 
     private var searchJob: Job? = null
     private var currentReg: String = ""
@@ -189,13 +197,27 @@ class MainActivity : AppCompatActivity() {
             aiProgressBar.visibility = View.VISIBLE
 
             lifecycleScope.launch {
-                // If MOT fetch is still running, wait for it to complete so currentMot is populated
+                // The MOT fetch (WebView challenge) runs for 15-45s when the site is slow. Wait
+                // for it briefly so a normally-fast fetch still informs the analysis, but never
+                // let it stall the button for three quarters of a minute — past the window we
+                // analyse with whatever we already have.
                 if (currentMot == null && searchJob?.isActive == true) {
-                    searchJob?.join()
+                    withTimeoutOrNull(AI_MOT_WAIT_MS) { searchJob?.join() }
                 }
 
-                // Ask Gemini!
-                val analysis = VehicleAiAnalyst.analyze(vehicle, currentMot)
+                // Ask Gemini! The reply streams in, so the answer starts appearing as soon as
+                // the first tokens land instead of after the whole response has been generated.
+                var lastRenderAt = 0L
+                val analysis = VehicleAiAnalyst.analyze(vehicle, currentMot) { partial ->
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastRenderAt < AI_RENDER_INTERVAL_MS) return@analyze
+                    lastRenderAt = now
+                    runOnUiThread {
+                        markwon.setMarkdown(tvAiResult, partial)
+                        tvAiResult.visibility = View.VISIBLE
+                        aiProgressBar.visibility = View.GONE
+                    }
+                }
 
                 if (!analysis.startsWith("AI Analysis is currently unavailable")) {
                     val existingCache = db.cachedVehicleDao().get(currentReg)

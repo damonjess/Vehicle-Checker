@@ -6,8 +6,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
+import org.jsoup.nodes.Element
 
 object MotHistoryScraper {
+
+    /** Every real test row is headed by a date such as "23 January 2026". */
+    private val DATE_LIKE = Regex("""\b\d{1,2} \w{3,9} \d{4}\b""")
+
+    private const val FAILURE = "FAILURE"
+    private const val ADVISORY = "ADVISORY"
 
     /**
      * Loads the public GOV.UK "Check MOT history" page for a registration and parses it.
@@ -55,6 +62,16 @@ object MotHistoryScraper {
                 )
             }
 
+            // A vehicle too new to have been tested: the service renders the accordion shell
+            // with this marker instead of any test rows. That is a real answer, not a fetch
+            // failure — and the accordion wrapper must never be mistaken for a test row.
+            if (doc.selectFirst("[data-test-id=vehicle-not-had-first-test]") != null) {
+                return MotHistoryData(
+                    registration = cleanReg,
+                    errorMessage = "This vehicle hasn't had its first MOT yet — there are no test records to show.",
+                )
+            }
+
             val header = doc.selectFirst("main")?.text() ?: doc.body().text()
 
             // Vehicle summary: dates, colour, fuel, MOT expiry
@@ -91,13 +108,15 @@ object MotHistoryScraper {
                     }
             }
 
-            // Individual tests
+            // Individual tests. Never select `.govuk-accordion__section` here: that is the panel
+            // wrapping the whole list, and it used to be parsed as one fake test row whose
+            // "date" was the panel heading ("MOT history , Check mileage recorded at test...").
             val tests = mutableListOf<MotTestRecord>()
-            var testItems = doc.select("[data-test-id=test-history-item]")
+            var testItems: List<Element> = doc.select("[data-test-id=test-history-item]")
             if (testItems.isEmpty()) {
-                testItems = doc.select(
-                    ".govuk-accordion__section, .mot-history-item, [id^=mot-history-item], [data-test-id^=test-history]",
-                )
+                testItems = doc
+                    .select(".mot-history-item, [id^=mot-history-item], [data-test-id^=test-history]")
+                    .filter { it.attr("data-test-id") != "test-history-item" && it.selectFirst("[data-test-id=test-result]") != null }
             }
 
             for (item in testItems) {
@@ -124,10 +143,23 @@ object MotHistoryScraper {
                 val failures = mutableListOf<String>()
                 val advisories = mutableListOf<String>()
 
+                // Guard against a non-test block sneaking through the selectors: every real row
+                // carries a date like "23 January 2026".
+                if (!DATE_LIKE.containsMatchIn(dateTested)) {
+                    safeLogD("MotScraper", "Skipping '$dateTested' — not a test date")
+                    continue
+                }
+
+                // Preferred path: the live service groups defects under a category heading span
+                // ([data-test-id=...-heading]) followed by a <ul> of items for that category.
+                extractStructuredDefects(item, failures, advisories)
+
                 val failElements = item.select("[data-test-id=fail-item], [data-test-id=failure-item], [data-test-id=defect-item], .defect-item, .fail-item")
                 val advisoryElements = item.select("[data-test-id=advisory-item], .advisory-item")
 
-                if (failElements.isNotEmpty() || advisoryElements.isNotEmpty()) {
+                if (failures.isNotEmpty() || advisories.isNotEmpty()) {
+                    // Structured parse already produced the lists.
+                } else if (failElements.isNotEmpty() || advisoryElements.isNotEmpty()) {
                     failElements.forEach { el ->
                         val text = el.text().trim()
                         if (text.isNotBlank() && !text.contains("What are", true)) failures.add(text)
@@ -244,7 +276,6 @@ object MotHistoryScraper {
                     errorMessage = "MOT history loaded but no test records were found for $cleanReg — please try again.",
                 )
             }
-
             // Compute mileage difference vs the previous test (page lists newest first)
             val withDiffs = tests.mapIndexed { index, test ->
                 val prev = tests.getOrNull(index + 1)
@@ -272,6 +303,49 @@ object MotHistoryScraper {
                 registration = cleanReg,
                 errorMessage = "Could not load MOT history: ${e.message ?: "unknown error"}",
             )
+        }
+    }
+
+    /**
+     * Reads defects straight from the markup the live service renders: inside a
+     * `[data-test-id=test-history-rfr-*]` block, each category heading
+     * (`[data-test-id=*-heading]`) is immediately followed by a `<ul>` of that category's items.
+     *
+     * Splitting on those headings is what keeps a failed test's advisories out of its failure
+     * list — every `<li>` on a failed test used to be recorded as a failure.
+     */
+    private fun extractStructuredDefects(
+        item: Element,
+        failures: MutableList<String>,
+        advisories: MutableList<String>,
+    ) {
+        var section: String? = null
+        var dangerous = false
+        for (el in item.select("[data-test-id\$=heading], ul")) {
+            // "What are defects and advisories?" guidance lives in a <details> inside the same
+            // block; its text is boilerplate, never a vehicle's own defect.
+            if (el.parents().any { it.tagName() == "details" }) continue
+
+            val id = el.attr("data-test-id")
+            if (id.endsWith("heading")) {
+                val heading = el.text().lowercase()
+                dangerous = id.contains("dangerous") || heading.contains("dangerous")
+                section = when {
+                    id.contains("failure") || id.contains("major") || id.contains("dangerous") ||
+                        heading.contains("fail") || heading.contains("dangerous") ||
+                        heading.contains("major") || heading.contains("do not drive") ||
+                        heading.contains("repair immediately") -> FAILURE
+                    else -> ADVISORY
+                }
+            } else if (el.tagName() == "ul" && section != null) {
+                val target = if (section == FAILURE) failures else advisories
+                for (li in el.select("li")) {
+                    val text = li.text().trim()
+                    if (text.isBlank() || text.contains("What are", true)) continue
+                    val labelled = if (dangerous && section == FAILURE) "[DANGEROUS] $text" else text
+                    if (!target.contains(labelled)) target.add(labelled)
+                }
+            }
         }
     }
 

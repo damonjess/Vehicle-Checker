@@ -24,7 +24,16 @@ object VehicleAiAnalyst {
     // Backoff delays in milliseconds for transient server demand spikes
     private val BACKOFF_DELAYS_MS = listOf(2000L, 5000L, 10000L)
 
-    suspend fun analyze(vehicle: VehicleData, mot: MotHistoryData?): String {
+    /**
+     * Runs the mechanic analysis, streaming the answer back through [onPartial] as tokens
+     * arrive (each call passes the response built so far, for the caller to render on the main
+     * thread). The return value is always the complete answer.
+     */
+    suspend fun analyze(
+        vehicle: VehicleData,
+        mot: MotHistoryData?,
+        onPartial: (String) -> Unit = {},
+    ): String {
         return withContext(Dispatchers.IO) {
             val prompt = buildPrompt(vehicle, mot)
             safeLogD(TAG, "=== PROMPT START ===\n$prompt\n=== PROMPT END ===")
@@ -40,10 +49,16 @@ object VehicleAiAnalyst {
                 val maxAttempts = BACKOFF_DELAYS_MS.size + 1
                 for (attempt in 0 until maxAttempts) {
                     try {
-                        val response = generativeModel.generateContent(prompt)
-                        val text = response.text
-                        if (!text.isNullOrBlank()) {
-                            return@withContext text
+                        val streamed = StringBuilder()
+                        generativeModel.generateContentStream(prompt).collect { chunk ->
+                            val piece = chunk.text
+                            if (!piece.isNullOrBlank()) {
+                                streamed.append(piece)
+                                if (streamed.isNotEmpty()) onPartial(streamed.toString())
+                            }
+                        }
+                        if (streamed.isNotBlank()) {
+                            return@withContext streamed.toString()
                         }
                     } catch (e: Exception) {
                         lastException = e
