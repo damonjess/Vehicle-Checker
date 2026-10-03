@@ -28,6 +28,10 @@ data class MotHistoryData(
     val passRatePercent: Int
         get() = if (tests.isEmpty()) 0 else ((passCount + passWithAdvisoriesCount) * 100.0 / tests.size).roundToLong().toInt()
 
+    /** Predictive health analysis across 5 key vehicle systems. */
+    val componentHealth: ComponentHealthCalculator.HealthReport
+        get() = ComponentHealthCalculator.calculate(this)
+
     /** Total individual defects recorded across every failed test. */
     val totalFailureCount: Int get() = tests.sumOf { it.failures.size }
 

@@ -233,13 +233,19 @@ object MotHistoryScraper {
             // Safety recalls section
             var recallStatus = RecallStatus.UNKNOWN
             var recallDetail = ""
-            doc.selectFirst("#recalls-content")?.let { recallsEl ->
-                val recallText = recallsEl.text().trim()
-                val testId = recallsEl.selectFirst("[data-test-id]")?.attr("data-test-id") ?: ""
+            val recallsEl = doc.selectFirst("#recalls-content")
+                ?: doc.selectFirst("[data-test-id*='recall']")
+                ?: doc.selectFirst(".recalls-status")
+                ?: doc.select("p:contains(recall), div:contains(recall)").firstOrNull()
+
+            recallsEl?.let { el ->
+                val recallText = el.text().trim()
+                val testId = el.selectFirst("[data-test-id]")?.attr("data-test-id") ?: ""
                 when {
                     testId.contains("outstanding") ||
                         recallText.contains("outstanding recall", true) ||
-                        recallText.contains("has not been fixed", true) -> {
+                        recallText.contains("has not been fixed", true) ||
+                        recallText.contains("unfixed recall", true) -> {
                         recallStatus = RecallStatus.OUTSTANDING
                         recallDetail = recallText
                     }

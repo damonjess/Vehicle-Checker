@@ -268,6 +268,11 @@ object MotApiClient {
             "no", "false" -> RecallStatus.NONE
             else -> RecallStatus.UNKNOWN
         }
+        val recallDetail = when (recallStatus) {
+            RecallStatus.OUTSTANDING -> "DVSA records indicate an outstanding safety recall for this vehicle. Contact a franchised dealer to schedule a free repair."
+            RecallStatus.NONE -> "No outstanding safety recalls recorded by DVSA."
+            RecallStatus.UNKNOWN -> "Safety recall status is unavailable via API."
+        }
 
         return MotHistoryData(
             registration = reg,
@@ -279,6 +284,7 @@ object MotApiClient {
             motValidUntil = motValidUntil,
             tests = withDiffs,
             recallStatus = recallStatus,
+            recallDetail = recallDetail,
         )
     }
     

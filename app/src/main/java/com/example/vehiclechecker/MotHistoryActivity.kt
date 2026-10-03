@@ -2,12 +2,15 @@ package com.example.vehiclechecker
 
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.View
+import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -148,6 +151,7 @@ class MotHistoryActivity : AppCompatActivity() {
         findViewById<View>(R.id.motContent).visibility = View.VISIBLE
 
         bindInsights(history)
+        bindComponentHealth(history)
         bindTests(history)
         bindMileageTable(history)
         bindRecurringIssues(history)
@@ -272,10 +276,55 @@ class MotHistoryActivity : AppCompatActivity() {
         }
     }
 
+    private fun bindComponentHealth(history: MotHistoryData) {
+        val card = findViewById<View>(R.id.cardComponentHealth)
+        val tvOverallBadge = findViewById<TextView>(R.id.tvOverallHealthBadge)
+        val container = findViewById<LinearLayout>(R.id.componentHealthContainer)
+
+        card.visibility = View.VISIBLE
+        container.removeAllViews()
+
+        val report = history.componentHealth
+        tvOverallBadge.text = "${report.overallScore}%"
+
+        val overallColor = when (report.overallStatus) {
+            ComponentHealthCalculator.ComponentStatus.GREEN -> ContextCompat.getColor(this, R.color.status_success)
+            ComponentHealthCalculator.ComponentStatus.AMBER -> ContextCompat.getColor(this, R.color.status_warn)
+            ComponentHealthCalculator.ComponentStatus.RED -> ContextCompat.getColor(this, R.color.status_danger)
+        }
+        tvOverallBadge.setTextColor(overallColor)
+
+        report.components.forEach { comp ->
+            val row = layoutInflater.inflate(R.layout.view_component_health_row, container, false)
+
+            val tvDomain = row.findViewById<TextView>(R.id.tvComponentDomainName)
+            val tvScore = row.findViewById<TextView>(R.id.tvComponentScore)
+            val pbScore = row.findViewById<ProgressBar>(R.id.pbComponentScore)
+            val tvNote = row.findViewById<TextView>(R.id.tvComponentNote)
+
+            tvDomain.text = comp.domain.displayName
+            tvScore.text = "${comp.score}%"
+            pbScore.progress = comp.score
+
+            val compColor = when (comp.status) {
+                ComponentHealthCalculator.ComponentStatus.GREEN -> ContextCompat.getColor(this, R.color.status_success)
+                ComponentHealthCalculator.ComponentStatus.AMBER -> ContextCompat.getColor(this, R.color.status_warn)
+                ComponentHealthCalculator.ComponentStatus.RED -> ContextCompat.getColor(this, R.color.status_danger)
+            }
+            tvScore.setTextColor(compColor)
+            pbScore.progressTintList = ColorStateList.valueOf(compColor)
+
+            tvNote.text = comp.latestNote
+
+            container.addView(row)
+        }
+    }
+
     private fun bindRecalls(history: MotHistoryData) {
         val cardRecalls = findViewById<View>(R.id.cardRecalls)
         val tvTitle = findViewById<TextView>(R.id.tvRecallTitle)
         val tvDetail = findViewById<TextView>(R.id.tvRecallDetail)
+        val btnDvsa = findViewById<Button>(R.id.btnCheckDvsaRecalls)
 
         cardRecalls.visibility = View.VISIBLE
         when (history.recallStatus) {
@@ -300,6 +349,12 @@ class MotHistoryActivity : AppCompatActivity() {
                     "Recall information is not available for this vehicle. Check with the manufacturer."
                 }
             }
+        }
+
+        btnDvsa.setOnClickListener {
+            val url = "https://www.check-vehicle-recalls.service.gov.uk/recall-type"
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            startActivity(intent)
         }
     }
 

@@ -138,9 +138,17 @@ object VehicleAiAnalyst {
                 "\n\nRecall Alert: Outstanding safety recall recorded (${mot.recallDetail})"
             } else ""
 
+            val healthReport = mot.componentHealth
+            val lowestComponents = healthReport.components
+                .filter { it.status != ComponentHealthCalculator.ComponentStatus.GREEN }
+                .joinToString("; ") { "${it.domain.displayName}: ${it.score}% (${it.latestNote})" }
+
+            val healthText = "\n\nCalculated Component Health Rating: ${healthReport.overallScore}%." +
+                if (lowestComponents.isNotBlank()) "\nSystems showing wear/risk: $lowestComponents" else ""
+
             """
             Actual MOT Test History for this vehicle (Last ${recentTests.size} tests):
-            $testDetails$anomalyText$recallText
+            $testDetails$anomalyText$recallText$healthText
             """.trimIndent()
         } else {
             "No specific MOT test history recorded for this vehicle."
